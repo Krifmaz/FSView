@@ -657,6 +657,49 @@ fn format_rules() {
     );
 }
 
+#[test]
+fn label_rules() {
+    let f = fstab_server(true);
+    let r = f.t.srv.handle(
+        &storage_req(
+            OP_FS_LABEL,
+            json!({"device": "nvme0n1p2", "label": "x"}),
+            true,
+            "",
+        ),
+        1,
+    );
+    assert!(r.error.contains("protected"), "{r:?}");
+    std::fs::write(
+        &f.fstab,
+        "LABEL=media3 /mnt/media3 ext4 defaults,nofail 0 2\n",
+    )
+    .unwrap();
+    let r = f.t.srv.handle(
+        &storage_req(
+            OP_FS_LABEL,
+            json!({"device": "sdc", "label": "media9"}),
+            true,
+            "",
+        ),
+        1,
+    );
+    assert!(r.error.contains("by its label"), "{r:?}");
+    std::fs::write(&f.fstab, "# none\n").unwrap();
+    if tool_exists_for_test("e2label") {
+        let r = f.t.srv.handle(
+            &storage_req(
+                OP_FS_LABEL,
+                json!({"device": "sdc", "label": "media9"}),
+                true,
+                "",
+            ),
+            1,
+        );
+        assert!(r.ok && r.plan[0] == "e2label /dev/sdc media9", "{r:?}");
+    }
+}
+
 fn tool_exists_for_test(t: &str) -> bool {
     ["/usr/sbin", "/usr/bin", "/sbin", "/bin"]
         .iter()

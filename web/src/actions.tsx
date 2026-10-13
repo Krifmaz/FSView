@@ -18,6 +18,8 @@ export interface ActionSpec {
   done?: (r: WriteResult) => string;
   /** Runs after success (e.g. a follow-up step); its error is shown. */
   then?: (r: WriteResult) => Promise<string | void>;
+  /** Follow-up steps run by `then`, listed after the dry-run plan. */
+  morePlan?: string[];
   /** Show the command output (e.g. fsck) in the result message. */
   showOutput?: boolean;
 }
@@ -52,7 +54,7 @@ export function useAction(onDone?: () => void) {
         operation: a.operation,
         destructive: a.destructive,
         confirmWith: a.confirmWith,
-        plan: dry.plan,
+        plan: [...dry.plan, ...(a.morePlan ?? [])],
         confirmLabel: a.confirmLabel ?? "Confirm",
         extra: a.extra,
         wide: a.wide,

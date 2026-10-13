@@ -55,7 +55,7 @@ impl HelperApi for FakeHelper {
                     Some("sdb") => json!({"device": "sdb", "devtype": "sat", "exit_status": 0, "standby": false, "raw": serde_json::from_slice::<Value>(&fx("smart_sdb_sat_synthetic.json")).unwrap()}),
                     _ => return e(CODE_EXEC_FAILED, "no data"),
                 },
-                OP_MOUNT | OP_UMOUNT | OP_FS_FORMAT | OP_FS_CHECK | OP_FS_REPAIR | OP_LOCATE => {
+                OP_MOUNT | OP_UMOUNT | OP_FS_FORMAT | OP_FS_CHECK | OP_FS_REPAIR | OP_LOCATE | OP_FS_LABEL => {
                     if !writes {
                         return e(CODE_WRITES_OFF, "writes disabled");
                     }
@@ -614,6 +614,16 @@ async fn storage_write_endpoints() {
     assert_eq!(last.op, OP_FS_REPAIR);
     let (s, _, _) = post("/api/disks/sdc/locate", r#"{"on":true,"confirmed":true}"#).await;
     assert_eq!(s, StatusCode::OK);
+    let (s, _, b) = post(
+        "/api/disks/sdc/label",
+        r#"{"device":"sdc","label":"media9","confirmed":true}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(
+        t.helper.reqs.lock().unwrap().last().unwrap().op,
+        OP_FS_LABEL
+    );
 }
 
 #[test]

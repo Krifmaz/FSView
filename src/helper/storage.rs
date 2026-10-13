@@ -128,6 +128,24 @@ fn find_node(d: &Disk, name: &str, out: &mut Option<BlockDev>) {
     });
 }
 
+fn label_of(inv: &Inventory, name: &str) -> String {
+    for d in &inv.disks {
+        if d.name == name {
+            return d.label.clone();
+        }
+        let mut l = None;
+        d.walk(&mut |n| {
+            if n.name == name {
+                l = Some(n.label.clone());
+            }
+        });
+        if let Some(l) = l {
+            return l;
+        }
+    }
+    String::new()
+}
+
 /// First partition of a disk as the kernel will name it.
 fn first_partition(disk: &str) -> String {
     if disk.ends_with(|c: char| c.is_ascii_digit()) {
@@ -588,6 +606,86 @@ impl Server {
                 if repair { "repair" } else { "check" },
                 dev.fstype,
                 dev.path
+            ),
+            detail: String::new(),
+        })
+    }
+
+    /// Changes a filesystem label. Refused when fstab mounts it by its
+    /// current label (the entry would stop matching at the next boot).
+    pub(super) fn prep_label(&self, req: &Request) -> Result<Plan, OpError> {
+        let p: LabelParams = decode(req)?;
+        if !label_re().is_match(&p.label) {
+            return Err(bad(
+                "label: 1-16 letters, digits, '.', '_' or '-', starting with a letter or digit",
+            ));
+        }
+        let inv = self.inventory().map_err(failed)?;
+        let dev = self.block_dev(&inv, &p.device)?;
+        if inv.find_disk(&dev.disk).is_some_and(|d| d.protected) {
+            return Err(bad(format!("{} is on a protected system disk", dev.name)));
+        }
+        let old = label_of(&inv, &dev.name);
+        if !old.is_empty() {
+            if let Some(e) = self.fstab_entries()?.iter().find(|e| {
+                e.spec == format!("LABEL={old}") || e.spec == format!("/dev/disk/by-label/{old}")
+            }) {
+                return Err(bad(format!(
+                    "fstab mounts {} by its label ({}); change that entry to UUID= on the fstab page first",
+                    e.file, e.spec
+                )));
+            }
+        }
+        let mounted = dev.mounted.first().cloned();
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let (max, cmd) = match dev.fstype.as_str() {
+            "ext2" | "ext3" | "ext4" => (16, s(&["e2label", &dev.path, &p.label])),
+            "xfs" => {
+                if mounted.is_some() {
+                    return Err(bad(
+                        "XFS labels can only be changed while unmounted; unmount it first",
+                    ));
+                }
+                (12, s(&["xfs_admin", "-L", &p.label, &dev.path]))
+            }
+            "btrfs" => (
+                255,
+                s(&[
+                    "btrfs",
+                    "filesystem",
+                    "label",
+                    mounted.as_deref().unwrap_or(&dev.path),
+                    &p.label,
+                ]),
+            ),
+            "vfat" => (11, s(&["fatlabel", &dev.path, &p.label.to_uppercase()])),
+            "exfat" => (15, s(&["exfatlabel", &dev.path, &p.label])),
+            "" => return Err(bad("no filesystem on this device")),
+            other => {
+                return Err(bad(format!(
+                    "renaming {other} filesystems is not supported"
+                )))
+            }
+        };
+        if p.label.len() > max {
+            return Err(bad(format!(
+                "{} labels can be at most {max} characters",
+                dev.fstype
+            )));
+        }
+        if !tool_exists(&cmd[0]) {
+            return Err(bad(format!("{} is not installed", cmd[0])));
+        }
+        let mut actions = vec![Action::Run(cmd)];
+        actions.extend(settle());
+        Ok(Plan {
+            targets: vec![dev.disk.clone()],
+            actions,
+            summary: format!(
+                "rename {} from {} to {}",
+                dev.path,
+                if old.is_empty() { "(no label)" } else { &old },
+                p.label
             ),
             detail: String::new(),
         })

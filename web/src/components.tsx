@@ -27,7 +27,7 @@ export function UsageBar({ usage }: { usage?: Usage }) {
         <div style={{ width: `${pct}%` }} />
       </div>
       <div className="small dim">
-        {pct.toFixed(0)}% · {fmtBytes(usage.avail_bytes)} free
+        <b style={{ color: "var(--text-2)", fontWeight: 600 }}>{fmtBytes(usage.used_bytes)}</b> of {fmtBytes(usage.size_bytes)} used ({pct.toFixed(0)}%) · {fmtBytes(usage.avail_bytes)} free
       </div>
     </div>
   );

@@ -24,6 +24,7 @@ pub const OP_FS_FORMAT: &str = "fs.format";
 pub const OP_FS_CHECK: &str = "fs.check";
 pub const OP_FS_REPAIR: &str = "fs.repair";
 pub const OP_LOCATE: &str = "enclosure.locate";
+pub const OP_FS_LABEL: &str = "fs.label";
 
 /// Upper bound for requests and responses on the socket.
 pub const MAX_MESSAGE: usize = 32 << 20;
@@ -309,4 +310,12 @@ pub struct MountInfo {
     pub used_bytes: u64,
     #[serde(default)]
     pub avail_bytes: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LabelParams {
+    /// Disk or partition holding the filesystem.
+    pub device: String,
+    pub label: String,
 }

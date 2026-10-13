@@ -87,7 +87,7 @@ fn class_of(op: &str) -> Option<Class> {
         | OP_AUDIT_LIST | OP_HIDDEN_SCAN | OP_FSTAB_READ | OP_FSTAB_PREVIEW | OP_FSTAB_BACKUP
         | OP_MOUNTS_LIST => Class::Read,
         OP_SMART_SELFTEST | OP_FSTAB_WRITE | OP_FSTAB_ROLLBACK | OP_MOUNT | OP_UMOUNT
-        | OP_FS_CHECK | OP_LOCATE => Class::Write,
+        | OP_FS_CHECK | OP_LOCATE | OP_FS_LABEL => Class::Write,
         OP_FS_FORMAT | OP_FS_REPAIR => Class::Destructive,
         _ => return None,
     })
@@ -281,6 +281,7 @@ impl Server {
             OP_FS_CHECK => self.prep_fs_check(req, false),
             OP_FS_REPAIR => self.prep_fs_check(req, true),
             OP_LOCATE => self.prep_locate(req),
+            OP_FS_LABEL => self.prep_label(req),
             _ => Err((CODE_UNKNOWN_OP, "unknown".into())),
         }
     }

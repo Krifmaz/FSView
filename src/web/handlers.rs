@@ -66,6 +66,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/disks/{name}/format", post(format))
         .route("/api/disks/{name}/check", post(fs_check))
         .route("/api/disks/{name}/locate", post(locate))
+        .route("/api/disks/{name}/label", post(relabel))
         .fallback(|| async { err(StatusCode::NOT_FOUND, "not_found", "no such endpoint") })
         .layer(middleware::from_fn(csrf));
     Router::new()
@@ -907,6 +908,18 @@ async fn fs_check(
         confirm_text: b.confirm_text,
     };
     helper_write(&app, (u, ip), op, b).await
+}
+
+async fn relabel(
+    State(app): AppState,
+    User(u, ip): User,
+    Path(name): Path<String>,
+    JsonBody(b): JsonBody<WriteBody<LabelParams>>,
+) -> Response {
+    if let Err(r) = device_of(&app, &name, &b.p.device).await {
+        return *r;
+    }
+    helper_write(&app, (u, ip), OP_FS_LABEL, b).await
 }
 
 #[derive(Deserialize, Serialize, Default)]

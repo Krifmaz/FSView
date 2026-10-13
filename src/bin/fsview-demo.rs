@@ -427,6 +427,10 @@ impl Demo {
                 vec![format!("e2fsck -f -y /dev/{}", s("device"))],
                 vec![s("device")],
             ),
+            OP_FS_LABEL => (
+                vec![format!("e2label /dev/{} {}", s("device"), s("label"))],
+                vec![s("device")],
+            ),
             OP_LOCATE => (
                 vec![format!(
                     "echo {} > /sys/class/enclosure/2:0:9:0/3/locate",
@@ -509,7 +513,8 @@ impl Demo {
             plan: vec![],
         };
         match req.op.as_str() {
-            OP_MOUNT | OP_UMOUNT | OP_FS_FORMAT | OP_FS_CHECK | OP_FS_REPAIR | OP_LOCATE => {
+            OP_MOUNT | OP_UMOUNT | OP_FS_FORMAT | OP_FS_CHECK | OP_FS_REPAIR | OP_LOCATE
+            | OP_FS_LABEL => {
                 return self.storage_write(req);
             }
             OP_FSTAB_WRITE => {

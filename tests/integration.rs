@@ -791,3 +791,36 @@ fn format_with_new_partition_table() {
     );
     assert_eq!(run("blkid", &["-s", "PTTYPE", "-o", "value", &dev]), "gpt");
 }
+
+#[test]
+fn relabel_on_loop_device() {
+    if !root() || !have("e2label") {
+        return;
+    }
+    let a = new_loop("fsvtest12");
+    let dir = tempfile::tempdir().unwrap();
+    let fstab_path = dir.path().join("fstab");
+    std::fs::write(
+        &fstab_path,
+        "LABEL=fsvtest12 /mnt/x ext4 defaults,nofail 0 2\n",
+    )
+    .unwrap();
+    let h = start_helper(Config {
+        allowed_uids: vec![0],
+        include_loop: true,
+        writes_enabled: true,
+        fstab_path: fstab_path.clone(),
+        version: "it".into(),
+        ..Default::default()
+    });
+    let p = serde_json::json!({"device": a.name(), "label": "renamed1"});
+    let e = op(&h, OP_FS_LABEL, p.clone(), "").unwrap_err();
+    assert!(e.msg.contains("by its label"), "{}", e.msg);
+    std::fs::write(&fstab_path, "# empty\n").unwrap();
+    let _m = mount(&a.dev);
+    op(&h, OP_FS_LABEL, p, "").unwrap_or_else(|e| panic!("label: {}", e.msg));
+    assert_eq!(
+        run("blkid", &["-p", "-s", "LABEL", "-o", "value", &a.dev]),
+        "renamed1"
+    );
+}

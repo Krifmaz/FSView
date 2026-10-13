@@ -2,6 +2,8 @@
 
 Self-hosted web app for disks, filesystems and storage pools on Proxmox VE 9 / Debian 13 hosts. One install per host, systemd services, UI on `http://<host>:9200`.
 
+Written in Rust (axum + tokio backend, no `unsafe` code) with a React + TypeScript UI embedded in the single binary.
+
 **Status: phase 1 (read-only foundation).** Overview, SMART health, kernel disk events, boot check, login, and the privilege-separated root helper. Later phases add the fstab editor, mount/format, mergerfs, RAID/ZFS/SnapRAID wizards, notifications and multi-host.
 
 ## Features (phase 1)
@@ -74,9 +76,9 @@ runuser -u fsview -- fsview user list
 ## Development
 
 ```bash
-make ui          # build the React UI into internal/web/dist (embedded in the binary)
-make build       # static binary in bin/fsview
-make test        # go vet, gofmt, unit tests, TypeScript typecheck
+make ui          # build the React UI into web/dist (embedded in the binary at compile time)
+make build       # release binary in bin/fsview
+make test        # cargo fmt --check, clippy -D warnings, cargo test, TypeScript typecheck
 make integration # root + loop devices only (temporary images, never real disks)
 make demo        # UI + API against recorded fixtures: http://127.0.0.1:9201 (demo / demo-password)
 cd web && FSVIEW_DEV_API=http://127.0.0.1:9201 npm run dev   # hot-reload UI against the demo backend
@@ -84,6 +86,6 @@ cd web && FSVIEW_DEV_API=http://127.0.0.1:9201 npm run dev   # hot-reload UI aga
 
 - `testdata/spiritlab/` holds real `lsblk`/`smartctl`/`findmnt`/`fstab` output from a PVE 9 host with an LSI SAS2308 and an expander shelf. `smart_sdb_sat_synthetic.json` is synthetic, as its name says.
 - CI runs unit tests and then the integration suite in a privileged `debian:trixie` container.
-- Pushing a tag `vX.Y.Z` builds amd64/arm64 release tarballs with checksums.
+- Pushing a tag `vX.Y.Z` (or running the Release workflow manually) builds the x86_64 release tarball with checksums.
 
-Layout: `cmd/fsview` (CLI: `serve`, `helper`, `user`), `internal/helper` (root side), `internal/web` (HTTP side), `internal/{inventory,smart,events,bootcheck}` (parsers and analysis, shared), `web/` (React + TypeScript), `deploy/` (installer, units, configs).
+Layout: `src/main.rs` (CLI: `serve`, `helper`, `user`), `src/helper/` (root side), `src/web/` (HTTP side), `src/{inventory,smart,events,bootcheck}` (parsers and analysis, shared), `src/bin/fsview-demo.rs`, `tests/integration.rs`, `web/` (React + TypeScript), `deploy/` (installer, units, configs).

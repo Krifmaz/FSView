@@ -261,7 +261,7 @@ export default function DiskPage({ name }: { name: string }) {
       <div className="between">
         <h2>SMART</h2>
         <div className="row">
-          {sm && <span className="small dim">checked {timeAgo(sm.checked_at)}{sm.updated_at && !sm.updated_at.startsWith("0001") && `, data from ${timeAgo(sm.updated_at)}`}</span>}
+          {sm && <span className="small dim">checked {timeAgo(sm.checked_at)}{sm.updated_at && `, data from ${timeAgo(sm.updated_at)}`}</span>}
           <button className="btn" disabled={refreshing} onClick={() => refresh(false)}>
             {refreshing ? <span className="spinner" /> : "↻"} Refresh
           </button>

@@ -1,0 +1,128 @@
+use super::*;
+
+fn load(name: &str, devtype: &str) -> Report {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata/spiritlab")
+        .join(name);
+    parse(&std::fs::read(p).unwrap(), devtype).unwrap()
+}
+
+#[test]
+fn scsi_failed_self_test() {
+    let r = load("smart_sdc_scsi.json", "");
+    assert_eq!(
+        (r.protocol.as_str(), r.model.as_str(), r.serial.as_str()),
+        ("SCSI", "ST2000DM 006-2DM164 SM", "Z4Z9WWC9")
+    );
+    assert!(
+        r.power_on_hours.is_none() && !r.notes.is_empty(),
+        "bridge hours must be unknown"
+    );
+    assert_eq!(r.self_tests.len(), 2);
+    assert_eq!(
+        (
+            r.self_tests[0].outcome.as_str(),
+            r.self_tests[0].detail.as_str()
+        ),
+        ("failed", "Medium Error")
+    );
+    assert!(r.looks_like_bridged_ata());
+    assert_eq!(r.long_minutes, 208);
+    let a = evaluate(&r, &Thresholds::default());
+    assert_eq!(a.status, CRIT);
+    assert!(a.findings[0].text.contains("Failed in segment"));
+}
+
+#[test]
+fn scsi_near_trip() {
+    let r = load("smart_sdi_scsi.json", "");
+    assert_eq!((r.temperature_c, r.temp_trip_c), (Some(36), Some(40)));
+    let a = evaluate(&r, &Thresholds::default());
+    assert_eq!(a.status, WARN);
+    assert_eq!(a.findings.len(), 1);
+    assert!(a.findings[0].text.contains("trip point 40"));
+    assert_eq!(r.self_tests[0].outcome, "aborted");
+}
+
+#[test]
+fn nvme() {
+    let r = load("smart_nvme0n1.json", "");
+    assert_eq!(
+        (
+            r.protocol.as_str(),
+            r.power_on_hours,
+            r.nvme_percent_used,
+            r.temp_trip_c
+        ),
+        ("NVMe", Some(4883), Some(0), Some(79))
+    );
+    assert_eq!(r.self_tests[0].outcome, "aborted");
+    assert_eq!(r.self_tests[1].outcome, "passed");
+    let tb = r.nvme_data_written_tb.unwrap();
+    assert!(tb > 23.0 && tb < 24.0);
+    assert_eq!(evaluate(&r, &Thresholds::default()).status, OK);
+}
+
+#[test]
+fn ata_via_sat() {
+    let r = load("smart_sdb_sat_synthetic.json", "sat");
+    assert_eq!((r.protocol.as_str(), r.devtype.as_str()), ("ATA", "sat"));
+    assert_eq!(
+        (r.reallocated, r.pending, r.temperature_c, r.power_on_hours),
+        (Some(8), Some(0), Some(31), Some(36842))
+    );
+    assert_eq!((r.long_minutes, r.short_minutes), (744, 1));
+    assert_eq!(r.self_tests[0].outcome, "passed");
+    assert_eq!(r.self_tests[1].outcome, "failed");
+    let a = evaluate(&r, &Thresholds::default());
+    assert_eq!(a.status, WARN);
+    assert!(a.findings[0].text.contains("reallocated sectors: 8"));
+}
+
+#[test]
+fn real_sat_error_log() {
+    let r = load("smart_ZXA0R1KK_sat.json", "sat");
+    assert_eq!(r.serial, "ZXA0R1KK");
+    assert_eq!(
+        (
+            r.reallocated,
+            r.pending,
+            r.offline_uncorrectable,
+            r.reported_uncorrectable,
+            r.temperature_c
+        ),
+        (Some(6), Some(4), Some(4), Some(138), Some(37))
+    );
+    assert_eq!(r.ata_error_count, Some(1020));
+    assert!(r.ata_last_error.contains("UNC"));
+    assert_eq!(r.self_tests[0].outcome, "aborted");
+    assert_eq!(r.self_tests[2].outcome, "passed");
+    let a = evaluate(&r, &Thresholds::default());
+    let all: String = a.findings.iter().map(|f| f.text.clone() + "\n").collect();
+    assert_eq!(a.status, WARN, "{all}");
+    for frag in [
+        "reallocated sectors: 6",
+        "pending sectors: 4",
+        "offline uncorrectable sectors: 4",
+        "reported uncorrectable errors: 138",
+        "ATA error log: 1020 errors, latest at 10624 h",
+    ] {
+        assert!(all.contains(frag), "missing {frag} in {all}");
+    }
+}
+
+#[test]
+fn standby_and_failed_overall() {
+    let r = parse(br#"{"smartctl":{"exit_status":2,"messages":[{"string":"Device is in STANDBY mode, exit(2)","severity":"information"}]},"device":{"name":"/dev/sdx","type":"sat","protocol":"ATA"}}"#, "sat").unwrap();
+    assert!(r.standby);
+    let failed = Report {
+        smart_available: true,
+        passed: Some(false),
+        ..Default::default()
+    };
+    assert_eq!(evaluate(&failed, &Thresholds::default()).status, CRIT);
+    assert_eq!(
+        evaluate(&Report::default(), &Thresholds::default()).status,
+        UNKNOWN
+    );
+}

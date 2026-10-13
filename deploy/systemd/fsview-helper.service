@@ -5,7 +5,7 @@ After=local-fs.target systemd-udevd.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/fsview helper -config /etc/fsview/helper.conf
+ExecStart=/usr/local/bin/fsview helper --config /etc/fsview/helper.conf
 Restart=on-failure
 RestartSec=2
 # /run/fsview holds the socket (root:fsview 0660).

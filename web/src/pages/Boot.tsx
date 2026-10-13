@@ -32,10 +32,10 @@ function HiddenData() {
       <p className="dim small">
         Files written into a mountpoint folder while its disk was not mounted stay on the disk underneath and become invisible once the mount
         returns. The root disk is checked automatically every 6 hours; scanning all disks may wake sleeping disks.
-        {data && !data.checked_at.startsWith("0001") && ` Last scan ${timeAgo(data.checked_at)} (${data.all ? "all disks" : "root disk"}).`}
+        {data?.checked_at && ` Last scan ${timeAgo(data.checked_at)} (${data.all ? "all disks" : "root disk"}).`}
       </p>
       {(error || data?.error) && <div className="alert error">{error ?? data?.error}</div>}
-      {data && !data.checked_at.startsWith("0001") && found.length === 0 && <div className="alert info">Nothing hidden under any mountpoint.</div>}
+      {data?.checked_at && found.length === 0 && <div className="alert info">Nothing hidden under any mountpoint.</div>}
       {found.map((h) => (
         <div key={h.mountpoint + h.parent} className="card" style={{ marginBottom: 8 }}>
           {h.error ? (

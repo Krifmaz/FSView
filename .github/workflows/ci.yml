@@ -7,14 +7,18 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          go-version-file: go.mod
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -22,14 +26,13 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Build UI
         run: cd web && npm ci && npm run build
-      - name: Vet and format
-        run: |
-          go vet ./...
-          go vet -tags integration ./test/integration
-          test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Unit tests
-        run: go test -race ./...
-      - name: Build binary
+        run: cargo test --locked
+      - name: Build release binary
         run: make build
       - uses: actions/upload-artifact@v4
         with:
@@ -42,15 +45,18 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build test binary
-        run: CGO_ENABLED=0 go test -c -tags integration -o it.test ./test/integration
+        run: |
+          mkdir -p web/dist && touch web/dist/.gitkeep
+          cargo test --locked --features integration --test integration --no-run --message-format=json \
+            | jq -r 'select(.profile.test == true and .target.name == "integration") | .executable' > it-path
+          cp "$(cat it-path)" it.test
       - name: Run in privileged container
         run: |
           docker run --rm --privileged -v /dev:/dev -v "$PWD":/src -w /tmp debian:trixie bash -euc '
             apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends util-linux mount e2fsprogs smartmontools pciutils >/dev/null
-            /src/it.test -test.v
+            /src/it.test --test-threads=1
           '

@@ -69,8 +69,8 @@ export interface HealthView {
   model?: string;
   standby: boolean;
   self_test_running?: Running;
-  updated_at: string;
-  checked_at: string;
+  updated_at: string | null;
+  checked_at: string | null;
   error?: string;
 }
 
@@ -224,8 +224,8 @@ export interface SmartReport {
 export interface SmartEntry {
   report?: SmartReport;
   assessment: { status: Status; findings?: Finding[] };
-  updated_at: string;
-  checked_at: string;
+  updated_at: string | null;
+  checked_at: string | null;
   standby: boolean;
   error?: string;
 }
@@ -274,7 +274,7 @@ export interface BootReport {
   userspace_start_sec: number;
   boot_finished_sec: number;
   entries: BootEntry[];
-  late_devices: { device: string; appeared_sec: number; after_timeout: boolean; mountpoints?: string[]; message: string }[] | null;
+  late_devices: { device: string; appeared_sec: number; after_timeout: boolean; mountpoints?: string[]; message: string }[];
   summary: { ok: number; failed: number; late: number; skipped: number };
   fstab_errors?: string[];
 }
@@ -339,6 +339,6 @@ export interface HiddenResult {
 export interface HiddenView {
   results: HiddenResult[];
   all: boolean;
-  checked_at: string;
+  checked_at: string | null;
   error?: string;
 }

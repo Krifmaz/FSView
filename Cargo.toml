@@ -1,0 +1,64 @@
+[package]
+name = "fsview"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Disk, filesystem and storage-pool manager for Proxmox VE hosts"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "fsview"
+path = "src/main.rs"
+
+[[bin]]
+name = "fsview-demo"
+path = "src/bin/fsview-demo.rs"
+
+[features]
+# Root + loop-device tests: cargo test --features integration -- --test-threads=1
+integration = []
+
+[dependencies]
+argon2 = "0.5"
+axum = "0.8"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+getrandom = "0.2"
+hex = "0.4"
+libc = "0.2"
+nix = { version = "0.29", features = ["socket", "user", "mount", "sched", "fs", "hostname", "net"] }
+regex = "1"
+rpassword = "7"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pemfile = "2"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rust-embed = { version = "8", features = ["mime-guess"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = "0.7"
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+
+# argon2 is far too slow unoptimized; keep tests fast.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

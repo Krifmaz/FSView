@@ -43,8 +43,8 @@ fi
 
 case "$(uname -m)" in
   x86_64) ARCH=amd64 ;;
-  aarch64) ARCH=arm64 ;;
-  *) die "unsupported architecture $(uname -m)" ;;
+
+  *) die "unsupported architecture $(uname -m) (release builds are x86_64 only)" ;;
 esac
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
@@ -106,8 +106,8 @@ install -m 0644 "$SRC/systemd/fsview.service" "$UNIT_DIR/fsview.service"
 systemctl daemon-reload
 
 FIRST_PW=""
-if [ -z "$(runuser -u fsview -- "$BIN_DIR/fsview" user list -config "$ETC/fsview.conf" 2>/dev/null)" ]; then
-  FIRST_PW="$(runuser -u fsview -- "$BIN_DIR/fsview" user add admin --generate -config "$ETC/fsview.conf" | awk '{print $NF}')"
+if [ -z "$(runuser -u fsview -- "$BIN_DIR/fsview" user list --config "$ETC/fsview.conf" 2>/dev/null)" ]; then
+  FIRST_PW="$(runuser -u fsview -- "$BIN_DIR/fsview" user add admin --generate --config "$ETC/fsview.conf" | awk '{print $NF}')"
 fi
 
 systemctl enable --now fsview-helper.service fsview.service >/dev/null

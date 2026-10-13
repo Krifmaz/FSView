@@ -30,7 +30,7 @@ export function fmtSec(s?: number | null): string {
   return `+${Math.floor(m / 60)}h${m % 60}m`;
 }
 
-export function timeAgo(iso?: string): string {
+export function timeAgo(iso?: string | null): string {
   if (!iso || iso.startsWith("0001")) return "never";
   const d = (Date.now() - new Date(iso).getTime()) / 1000;
   if (d < 60) return "just now";
@@ -39,7 +39,7 @@ export function timeAgo(iso?: string): string {
   return `${Math.floor(d / 86400)} d ago`;
 }
 
-export function fmtTime(iso?: string): string {
+export function fmtTime(iso?: string | null): string {
   if (!iso) return "–";
   return new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "medium" });
 }

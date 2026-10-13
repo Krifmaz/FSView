@@ -338,6 +338,11 @@ func prepSmartSelfTest(ctx context.Context, s *Server, req *proto.Request) (*Pla
 		return nil, badReq("test must be short, long or abort")
 	}
 	devtype := s.cachedSmartType(p.Device)
+	if devtype == "sat" {
+		if err := s.verifyPassThrough(ctx, p.Device); err != nil {
+			return nil, err
+		}
+	}
 	args := []string{"smartctl"}
 	if devtype != "" {
 		args = append(args, "-d", devtype)

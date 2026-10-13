@@ -1,0 +1,10 @@
+{"json_format_version":[1,0],"smartctl":{"version":[7,5],"exit_status":0},"device":{"name":"/dev/sdb","info_name":"/dev/sdb","type":"scsi","protocol":"SCSI"},
+"scsi_vendor":"ST6000DM","scsi_product":"003-2CY186    SM","model_name":"ST6000DM 003-2CY186    SM","scsi_revision":"4321",
+"user_capacity":{"blocks":11721045168,"bytes":6001175126016},"logical_block_size":512,"physical_block_size":4096,"rotation_rate":5425,
+"logical_unit_id":"0x500605ba01279f48","serial_number":"ZCT1RSPR","scsi_transport_protocol":{"name":"SAS (SPL-4)","value":6},
+"smart_support":{"available":true,"enabled":true},"smart_status":{"passed":true},"temperature":{"current":31,"drive_trip":55},
+"power_on_time":{"hours":0,"minutes":0},
+"scsi_error_counter_log":{"read":{"total_uncorrected_errors":0},"write":{"total_uncorrected_errors":0}},
+"scsi_self_test_0":{"code":{"value":0,"string":"Default"},"result":{"value":2,"string":"Aborted (device reset ?)"},"power_on_time":{"hours":36800}},
+"scsi_self_test_1":{"code":{"value":0,"string":"Default"},"result":{"value":1,"string":"Aborted (by user command)"},"power_on_time":{"hours":36789}},
+"scsi_extended_self_test_seconds":44640}

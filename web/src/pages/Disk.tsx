@@ -59,6 +59,8 @@ function SmartMetrics({ r }: { r: SmartReport }) {
           <Metric label="Pending" value={n(r.pending)} bad={!!r.pending} />
           <Metric label="Offline uncorrectable" value={n(r.offline_uncorrectable)} bad={!!r.offline_uncorrectable} />
           <Metric label="CRC errors" value={n(r.crc_errors)} bad={!!r.crc_errors} />
+          <Metric label="Reported uncorrectable" value={n(r.reported_uncorrectable)} bad={!!r.reported_uncorrectable} />
+          <Metric label="Error log entries" value={n(r.ata_error_count)} bad={!!r.ata_error_count} />
         </>
       )}
       {r.protocol === "SCSI" && (
@@ -282,6 +284,13 @@ export default function DiskPage({ name }: { name: string }) {
               {f.text}
             </div>
           ))}
+          {(r.messages ?? [])
+            .filter((m) => m.startsWith("FSView:"))
+            .map((m) => (
+              <div key={m} className="alert warn">
+                {m.replace(/^FSView:\s*/, "")}
+              </div>
+            ))}
           {(r.notes ?? []).map((n) => (
             <div key={n} className="alert info small">
               {n}
@@ -388,7 +397,9 @@ export default function DiskPage({ name }: { name: string }) {
               </table>
             </div>
           )}
-          {(r.messages ?? []).length > 0 && <div className="small dim">smartctl: {r.messages!.join(" · ")}</div>}
+          {(r.messages ?? []).some((m) => !m.startsWith("FSView:")) && (
+            <div className="small dim">smartctl: {r.messages!.filter((m) => !m.startsWith("FSView:")).join(" · ")}</div>
+          )}
           <details style={{ marginTop: 10 }} onToggle={(e) => (e.target as HTMLDetailsElement).open && !raw && loadRaw()}>
             <summary>Raw smartctl JSON</summary>
             <pre className="raw">{raw ? JSON.stringify(raw, null, 2) : "Loading…"}</pre>

@@ -14,6 +14,7 @@ const FIELDS: { key: keyof Thresholds; label: string; unit?: string }[] = [
   { key: "pending_crit", label: "Pending sectors critical" },
   { key: "uncorrectable_warn", label: "Uncorrectable errors warning" },
   { key: "crc_warn", label: "Interface CRC errors warning" },
+  { key: "error_log_warn", label: "ATA error log entries warning" },
   { key: "nvme_used_warn", label: "NVMe endurance used warning", unit: "%" },
   { key: "nvme_used_crit", label: "NVMe endurance used critical", unit: "%" },
 ];

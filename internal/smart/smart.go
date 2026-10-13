@@ -64,6 +64,10 @@ type Report struct {
 	GrownDefects   *int64 `json:"grown_defects,omitempty"`
 	Uncorrected    *int64 `json:"uncorrected_errors,omitempty"`
 
+	ATAErrorCount     *int64 `json:"ata_error_count,omitempty"`
+	ATALastError      string `json:"ata_last_error,omitempty"`
+	ATALastErrorHours *int64 `json:"ata_last_error_hours,omitempty"`
+
 	NVMeCriticalWarning *int     `json:"nvme_critical_warning,omitempty"`
 	NVMePercentUsed     *int     `json:"nvme_percent_used,omitempty"`
 	NVMeSpare           *int     `json:"nvme_available_spare,omitempty"`
@@ -155,6 +159,22 @@ type raw struct {
 			} `json:"raw"`
 		} `json:"table"`
 	} `json:"ata_smart_attributes"`
+	ATAErrorLog *struct {
+		Summary *struct {
+			Count *int64 `json:"count"`
+			Table []struct {
+				LifetimeHours *int64 `json:"lifetime_hours"`
+				Description   string `json:"error_description"`
+			} `json:"table"`
+		} `json:"summary"`
+		Extended *struct {
+			Count *int64 `json:"count"`
+			Table []struct {
+				LifetimeHours *int64 `json:"lifetime_hours"`
+				Description   string `json:"error_description"`
+			} `json:"table"`
+		} `json:"extended"`
+	} `json:"ata_smart_error_log"`
 	ATASelfTestLog *struct {
 		Standard *struct {
 			Table []struct {
@@ -328,6 +348,24 @@ func parseATA(r *raw, rep *Report) {
 					rep.TemperatureC = &t
 				}
 			}
+		}
+	}
+	if el := r.ATAErrorLog; el != nil {
+		type entry = struct {
+			LifetimeHours *int64 `json:"lifetime_hours"`
+			Description   string `json:"error_description"`
+		}
+		var count *int64
+		var table []entry
+		if el.Extended != nil && el.Extended.Count != nil {
+			count, table = el.Extended.Count, el.Extended.Table
+		} else if el.Summary != nil {
+			count, table = el.Summary.Count, el.Summary.Table
+		}
+		rep.ATAErrorCount = count
+		if len(table) > 0 {
+			rep.ATALastError = table[0].Description
+			rep.ATALastErrorHours = table[0].LifetimeHours
 		}
 	}
 	if r.ATAData != nil && r.ATAData.SelfTest != nil {

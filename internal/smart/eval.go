@@ -13,6 +13,7 @@ type Thresholds struct {
 	PendingCrit     int64 `json:"pending_crit"`
 	UncorrWarn      int64 `json:"uncorrectable_warn"`
 	CRCWarn         int64 `json:"crc_warn"`
+	ErrorLogWarn    int64 `json:"error_log_warn"`
 	NVMeUsedWarn    int   `json:"nvme_used_warn"`
 	NVMeUsedCrit    int   `json:"nvme_used_crit"`
 }
@@ -22,7 +23,7 @@ func DefaultThresholds() Thresholds {
 		TempWarnC: 50, TempCritC: 60, TripMarginC: 5,
 		ReallocatedWarn: 1, ReallocatedCrit: 100,
 		PendingWarn: 1, PendingCrit: 10,
-		UncorrWarn: 1, CRCWarn: 1,
+		UncorrWarn: 1, CRCWarn: 1, ErrorLogWarn: 1,
 		NVMeUsedWarn: 80, NVMeUsedCrit: 95,
 	}
 }
@@ -127,6 +128,17 @@ func Evaluate(r *Report, t Thresholds) Assessment {
 		add(StatusWarn, "interface CRC errors: %d (check cable/backplane)", *r.CRCErrors)
 	}
 
+	if r.ATAErrorCount != nil && t.ErrorLogWarn > 0 && *r.ATAErrorCount >= t.ErrorLogWarn {
+		msg := fmt.Sprintf("ATA error log: %d errors", *r.ATAErrorCount)
+		if r.ATALastError != "" {
+			msg += ", latest"
+			if r.ATALastErrorHours != nil {
+				msg += fmt.Sprintf(" at %d h", *r.ATALastErrorHours)
+			}
+			msg += ": " + r.ATALastError
+		}
+		add(StatusWarn, "%s", msg)
+	}
 	if r.NVMeCriticalWarning != nil && *r.NVMeCriticalWarning != 0 {
 		add(StatusCrit, "NVMe critical warning flags: 0x%02x", *r.NVMeCriticalWarning)
 	}

@@ -106,3 +106,29 @@ func TestStandbyAndFailedOverall(t *testing.T) {
 		t.Fatal("no SMART must be unknown")
 	}
 }
+
+func TestRealSATErrorLog(t *testing.T) {
+	r := load(t, "smart_ZXA0R1KK_sat.json", "sat")
+	if r.Serial != "ZXA0R1KK" || *r.Reallocated != 6 || *r.Pending != 4 || *r.OfflineUncorr != 4 || *r.ReportedUncorr != 138 || *r.TemperatureC != 37 {
+		t.Fatalf("%+v", r)
+	}
+	if r.ATAErrorCount == nil || *r.ATAErrorCount != 1020 || !strings.Contains(r.ATALastError, "UNC") {
+		t.Fatalf("error log: %v %q", r.ATAErrorCount, r.ATALastError)
+	}
+	if r.SelfTests[0].Outcome != "aborted" || r.SelfTests[2].Outcome != "passed" {
+		t.Fatalf("self tests %+v", r.SelfTests)
+	}
+	a := Evaluate(r, DefaultThresholds())
+	all := ""
+	for _, f := range a.Findings {
+		all += f.Text + "\n"
+	}
+	if a.Status != StatusWarn {
+		t.Fatalf("status %s: %s", a.Status, all)
+	}
+	for _, frag := range []string{"reallocated sectors: 6", "pending sectors: 4", "offline uncorrectable sectors: 4", "reported uncorrectable errors: 138", "ATA error log: 1020 errors, latest at 10624 h"} {
+		if !strings.Contains(all, frag) {
+			t.Errorf("missing %q in\n%s", frag, all)
+		}
+	}
+}

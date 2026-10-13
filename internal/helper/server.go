@@ -44,7 +44,7 @@ type Server struct {
 	logger *log.Logger
 
 	mu         sync.Mutex
-	smartTypes map[string]string // device+serial -> chosen -d type
+	smartTypes map[string]smartChoice // device -> verified -d type
 }
 
 func New(cfg Config, r runner.Runner, audit *AuditLog) *Server {
@@ -61,7 +61,7 @@ func New(cfg Config, r runner.Runner, audit *AuditLog) *Server {
 		audit:      audit,
 		inv:        inv,
 		logger:     log.New(os.Stderr, "fsview-helper: ", log.LstdFlags),
-		smartTypes: map[string]string{},
+		smartTypes: map[string]smartChoice{},
 	}
 }
 

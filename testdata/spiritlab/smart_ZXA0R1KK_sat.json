@@ -1,0 +1,469 @@
+{
+ "_comment": "Real output of `smartctl -d sat -j -a /dev/sdb` on spiritlab (2026-10-12 21:00 EDT), trimmed. NOTE: it reports serial ZXA0R1KK (the 28TB disk, earlier sdi) although sdb's SCSI serial was ZCT1RSPR.",
+ "json_format_version": [
+  1,
+  0
+ ],
+ "smartctl": {
+  "version": [
+   7,
+   5
+  ],
+  "exit_status": 64
+ },
+ "device": {
+  "name": "/dev/sdb",
+  "info_name": "/dev/sdb [SAT]",
+  "type": "sat",
+  "protocol": "ATA"
+ },
+ "model_name": "ST28000NM000C-3WM103",
+ "serial_number": "ZXA0R1KK",
+ "firmware_version": "SN04",
+ "user_capacity": {
+  "blocks": 54689529856,
+  "bytes": 28001039286272
+ },
+ "logical_block_size": 512,
+ "physical_block_size": 4096,
+ "rotation_rate": 7200,
+ "interface_speed": {
+  "max": {
+   "string": "6.0 Gb/s"
+  },
+  "current": {
+   "string": "3.0 Gb/s"
+  }
+ },
+ "smart_support": {
+  "available": true,
+  "enabled": true
+ },
+ "smart_status": {
+  "passed": true
+ },
+ "ata_smart_data": {
+  "self_test": {
+   "status": {
+    "value": 0,
+    "string": "completed without error",
+    "passed": true
+   },
+   "polling_minutes": {
+    "short": 1,
+    "extended": 2533,
+    "conveyance": 2
+   }
+  }
+ },
+ "ata_smart_attributes": {
+  "revision": 10,
+  "table": [
+   {
+    "id": 1,
+    "name": "Raw_Read_Error_Rate",
+    "value": 75,
+    "worst": 64,
+    "thresh": 44,
+    "when_failed": "",
+    "flags": {
+     "prefailure": true
+    },
+    "raw": {
+     "value": 34440728,
+     "string": "34440728"
+    }
+   },
+   {
+    "id": 3,
+    "name": "Spin_Up_Time",
+    "value": 93,
+    "worst": 91,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": true
+    },
+    "raw": {
+     "value": 0,
+     "string": "0"
+    }
+   },
+   {
+    "id": 4,
+    "name": "Start_Stop_Count",
+    "value": 100,
+    "worst": 100,
+    "thresh": 20,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 89,
+     "string": "89"
+    }
+   },
+   {
+    "id": 5,
+    "name": "Reallocated_Sector_Ct",
+    "value": 100,
+    "worst": 100,
+    "thresh": 10,
+    "when_failed": "",
+    "flags": {
+     "prefailure": true
+    },
+    "raw": {
+     "value": 6,
+     "string": "6"
+    }
+   },
+   {
+    "id": 7,
+    "name": "Seek_Error_Rate",
+    "value": 72,
+    "worst": 60,
+    "thresh": 45,
+    "when_failed": "",
+    "flags": {
+     "prefailure": true
+    },
+    "raw": {
+     "value": 193992041173,
+     "string": "193992041173"
+    }
+   },
+   {
+    "id": 9,
+    "name": "Power_On_Hours",
+    "value": 88,
+    "worst": 88,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 10631,
+     "string": "10631"
+    }
+   },
+   {
+    "id": 10,
+    "name": "Spin_Retry_Count",
+    "value": 100,
+    "worst": 100,
+    "thresh": 97,
+    "when_failed": "",
+    "flags": {
+     "prefailure": true
+    },
+    "raw": {
+     "value": 0,
+     "string": "0"
+    }
+   },
+   {
+    "id": 12,
+    "name": "Power_Cycle_Count",
+    "value": 100,
+    "worst": 100,
+    "thresh": 20,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 90,
+     "string": "90"
+    }
+   },
+   {
+    "id": 18,
+    "name": "Unknown_Attribute",
+    "value": 100,
+    "worst": 100,
+    "thresh": 50,
+    "when_failed": "",
+    "flags": {
+     "prefailure": true
+    },
+    "raw": {
+     "value": 0,
+     "string": "0"
+    }
+   },
+   {
+    "id": 187,
+    "name": "Reported_Uncorrect",
+    "value": 1,
+    "worst": 1,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 138,
+     "string": "138"
+    }
+   },
+   {
+    "id": 188,
+    "name": "Command_Timeout",
+    "value": 100,
+    "worst": 99,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 8590458892,
+     "string": "8590458892"
+    }
+   },
+   {
+    "id": 190,
+    "name": "Airflow_Temperature_Cel",
+    "value": 63,
+    "worst": 46,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 623050789,
+     "string": "37 (Min/Max 35/37)"
+    }
+   },
+   {
+    "id": 192,
+    "name": "Power-Off_Retract_Count",
+    "value": 100,
+    "worst": 100,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 81,
+     "string": "81"
+    }
+   },
+   {
+    "id": 193,
+    "name": "Load_Cycle_Count",
+    "value": 100,
+    "worst": 100,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 504,
+     "string": "504"
+    }
+   },
+   {
+    "id": 194,
+    "name": "Temperature_Celsius",
+    "value": 37,
+    "worst": 54,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 77309411365,
+     "string": "37 (0 18 0 0 0)"
+    }
+   },
+   {
+    "id": 197,
+    "name": "Current_Pending_Sector",
+    "value": 100,
+    "worst": 100,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 4,
+     "string": "4"
+    }
+   },
+   {
+    "id": 198,
+    "name": "Offline_Uncorrectable",
+    "value": 100,
+    "worst": 100,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 4,
+     "string": "4"
+    }
+   },
+   {
+    "id": 199,
+    "name": "UDMA_CRC_Error_Count",
+    "value": 200,
+    "worst": 200,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 0,
+     "string": "0"
+    }
+   },
+   {
+    "id": 200,
+    "name": "Multi_Zone_Error_Rate",
+    "value": 100,
+    "worst": 100,
+    "thresh": 1,
+    "when_failed": "",
+    "flags": {
+     "prefailure": true
+    },
+    "raw": {
+     "value": 0,
+     "string": "0"
+    }
+   },
+   {
+    "id": 240,
+    "name": "Head_Flying_Hours",
+    "value": 100,
+    "worst": 100,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 104492259354918,
+     "string": "10534 (95 9 0)"
+    }
+   },
+   {
+    "id": 241,
+    "name": "Total_LBAs_Written",
+    "value": 100,
+    "worst": 253,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 481579786942,
+     "string": "481579786942"
+    }
+   },
+   {
+    "id": 242,
+    "name": "Total_LBAs_Read",
+    "value": 100,
+    "worst": 253,
+    "thresh": 0,
+    "when_failed": "",
+    "flags": {
+     "prefailure": false
+    },
+    "raw": {
+     "value": 860651841421,
+     "string": "860651841421"
+    }
+   }
+  ]
+ },
+ "power_on_time": {
+  "hours": 10631
+ },
+ "power_cycle_count": 90,
+ "temperature": {
+  "current": 37
+ },
+ "ata_smart_error_log": {
+  "summary": {
+   "revision": 1,
+   "count": 1020,
+   "logged_count": 5,
+   "table": [
+    {
+     "error_number": 1020,
+     "lifetime_hours": 10624,
+     "error_description": "Error: UNC at LBA = 0x0fffffff = 268435455"
+    }
+   ]
+  }
+ },
+ "ata_smart_self_test_log": {
+  "standard": {
+   "revision": 1,
+   "table": [
+    {
+     "type": {
+      "value": 2,
+      "string": "Extended offline"
+     },
+     "status": {
+      "value": 32,
+      "string": "Interrupted (host reset)"
+     },
+     "lifetime_hours": 10583
+    },
+    {
+     "type": {
+      "value": 2,
+      "string": "Extended offline"
+     },
+     "status": {
+      "value": 32,
+      "string": "Interrupted (host reset)"
+     },
+     "lifetime_hours": 4081
+    },
+    {
+     "type": {
+      "value": 1,
+      "string": "Short offline"
+     },
+     "status": {
+      "value": 0,
+      "string": "Completed without error",
+      "passed": true
+     },
+     "lifetime_hours": 4081
+    },
+    {
+     "type": {
+      "value": 1,
+      "string": "Short offline"
+     },
+     "status": {
+      "value": 0,
+      "string": "Completed without error",
+      "passed": true
+     },
+     "lifetime_hours": 0
+    }
+   ],
+   "count": 4
+  }
+ }
+}

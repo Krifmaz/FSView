@@ -189,6 +189,9 @@ export interface SmartReport {
   crc_errors?: number;
   grown_defects?: number;
   uncorrected_errors?: number;
+  ata_error_count?: number;
+  ata_last_error?: string;
+  ata_last_error_hours?: number;
   nvme_critical_warning?: number;
   nvme_percent_used?: number;
   nvme_available_spare?: number;
@@ -289,6 +292,7 @@ export interface Thresholds {
   pending_crit: number;
   uncorrectable_warn: number;
   crc_warn: number;
+  error_log_warn: number;
   nvme_used_warn: number;
   nvme_used_crit: number;
 }

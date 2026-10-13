@@ -124,8 +124,10 @@ func TestSelfTestDryRunConfirmAndRun(t *testing.T) {
 
 func TestSmartAutoSAT(t *testing.T) {
 	fake := &runner.Fake{Responses: map[string]runner.Result{
-		"smartctl -j -a -n standby /dev/sdb":        {Stdout: td(t, "smart_sdc_scsi.json")},
+		"smartctl -j -a -n standby /dev/sdb":        {Stdout: td(t, "smart_sdb_scsi.json")},
 		"smartctl -j -a -n standby -d sat /dev/sdb": {Stdout: td(t, "smart_sdb_sat_synthetic.json")},
+		"smartctl -j -i /dev/sdb":                   {Stdout: td(t, "smart_sdb_scsi.json")},
+		"smartctl -j -i -d sat /dev/sdb":            {Stdout: td(t, "smart_sdb_sat_synthetic.json")},
 		"smartctl -d sat -t long /dev/sdb":          {Stdout: []byte("ok")},
 	}}
 	s, _ := newTestServer(t, true, fake)
@@ -213,5 +215,55 @@ func TestSocketPeerCredentials(t *testing.T) {
 			}
 		}
 		cancel()
+	}
+}
+
+// Real spiritlab behaviour: `smartctl -d sat /dev/sdb` answered with the
+// identity of a different disk. Pass-through must not be used then.
+func TestSmartSATSerialMismatch(t *testing.T) {
+	fake := &runner.Fake{Responses: map[string]runner.Result{
+		"smartctl -j -a -n standby /dev/sdb":        {Stdout: td(t, "smart_sdb_scsi.json")},
+		"smartctl -j -a -n standby -d sat /dev/sdb": {Stdout: td(t, "smart_ZXA0R1KK_sat.json"), ExitCode: 64},
+		"smartctl -t short /dev/sdb":                {Stdout: []byte("ok")},
+	}}
+	s, _ := newTestServer(t, true, fake)
+	ctx := context.Background()
+	resp := s.Handle(ctx, req(proto.OpSmartGet, proto.SmartGetParams{Device: "sdb"}), 1)
+	var out proto.SmartGetResult
+	json.Unmarshal(resp.Result, &out)
+	if out.DevType != "" || !strings.Contains(string(out.Raw), "ZCT1RSPR") || !strings.Contains(string(out.Raw), "FSView: ATA pass-through") {
+		t.Fatalf("mismatched pass-through was used or not flagged: devtype=%q", out.DevType)
+	}
+	r := req(proto.OpSmartSelfTest, proto.SmartSelfTestParams{Device: "sdb", Test: "short"})
+	r.Confirmed = true
+	if resp := s.Handle(ctx, r, 1); !resp.OK || resp.Plan[0] != "smartctl -t short /dev/sdb" {
+		t.Fatalf("self-test must not use -d sat: %+v", resp)
+	}
+}
+
+// If the bridge starts misrouting after detection, a write is refused.
+func TestSelfTestReverifiesPassThrough(t *testing.T) {
+	fake := &runner.Fake{Responses: map[string]runner.Result{
+		"smartctl -j -a -n standby /dev/sdb":        {Stdout: td(t, "smart_sdb_scsi.json")},
+		"smartctl -j -a -n standby -d sat /dev/sdb": {Stdout: td(t, "smart_sdb_sat_synthetic.json")},
+		"smartctl -j -i /dev/sdb":                   {Stdout: td(t, "smart_sdb_scsi.json")},
+		"smartctl -j -i -d sat /dev/sdb":            {Stdout: td(t, "smart_ZXA0R1KK_sat.json")},
+	}}
+	s, _ := newTestServer(t, true, fake)
+	ctx := context.Background()
+	s.Handle(ctx, req(proto.OpSmartGet, proto.SmartGetParams{Device: "sdb"}), 1)
+	if s.cachedSmartType("sdb") != "sat" {
+		t.Fatal("expected sat after matching detection")
+	}
+	r := req(proto.OpSmartSelfTest, proto.SmartSelfTestParams{Device: "sdb", Test: "short"})
+	r.Confirmed = true
+	resp := s.Handle(ctx, r, 1)
+	if resp.OK || !strings.Contains(resp.Error, "ZXA0R1KK") {
+		t.Fatalf("misrouted pass-through not refused: %+v", resp)
+	}
+	for _, c := range fake.Calls {
+		if strings.Contains(c, " -t ") {
+			t.Fatalf("self-test command ran: %s", c)
+		}
 	}
 }

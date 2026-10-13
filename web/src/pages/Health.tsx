@@ -2,20 +2,35 @@ import { api } from "../api";
 import { ErrorBox, Loading, StatusBadge, Temp } from "../components";
 import type { Overview } from "../types";
 import { fmtBytes, fmtHours, slotLabel, timeAgo, useFetch } from "../util";
+import { useSelfTest } from "../selftest";
 
 const order: Record<string, number> = { crit: 0, warn: 1, unknown: 2, ok: 3 };
 
 export default function HealthPage() {
-  const { data, error, loading } = useFetch(() => api.get<Overview>("/api/overview"), [], 60000);
+  const { data, error, loading, reload } = useFetch(() => api.get<Overview>("/api/overview"), [], 60000);
+  const st = useSelfTest(reload);
   if (loading && !data) return <Loading />;
   const disks = [...(data?.disks ?? [])].sort((a, b) => (order[a.health?.status ?? "unknown"] ?? 9) - (order[b.health?.status ?? "unknown"] ?? 9) || a.name.localeCompare(b.name));
   return (
     <>
-      <h1>Health</h1>
+      <div className="page-head">
+        <div>
+          <h1>Health</h1>
+          <p className="sub small">
+            SMART is read every 30 minutes with <span className="mono">smartctl -n standby</span>, so sleeping disks are not woken. Thresholds are set under Settings.
+          </p>
+        </div>
+        <div className="row">
+          <button className="btn" disabled={st.busy || !disks.length} onClick={() => st.start(disks.filter((d) => !d.health?.self_test_running), "short", 2)}>
+            Short test all disks
+          </button>
+          <button className="btn" disabled={st.busy || !disks.length} onClick={() => st.start(disks.filter((d) => !d.health?.self_test_running), "long")}>
+            Long test all disks
+          </button>
+        </div>
+      </div>
       <ErrorBox error={error} />
-      <p className="dim small">
-        SMART is read every 30 minutes with <span className="mono">smartctl -n standby</span>, so sleeping disks are not woken. Thresholds are set under Settings.
-      </p>
+      {st.message}
       <div className="table-wrap">
         <table>
           <thead>
@@ -26,6 +41,7 @@ export default function HealthPage() {
               <th>Power-on</th>
               <th>Findings</th>
               <th>Checked</th>
+              <th>Self-test</th>
             </tr>
           </thead>
           <tbody>
@@ -56,11 +72,33 @@ export default function HealthPage() {
                   {d.health?.status === "ok" && !d.health.findings?.length && <span className="dim">no issues</span>}
                 </td>
                 <td className="small dim">{timeAgo(d.health?.checked_at)}</td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  {d.health?.self_test_running ? (
+                    <div className="row" style={{ gap: 6 }}>
+                      <span className="badge info">
+                        running{d.health.self_test_running.remaining_percent !== undefined && `, ${d.health.self_test_running.remaining_percent}% left`}
+                      </span>
+                      <button className="btn sm" disabled={st.busy} onClick={() => st.start([d], "abort")}>
+                        Abort
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                      <button className="btn sm" disabled={st.busy} onClick={() => st.start([d], "short", 2)}>
+                        Short
+                      </button>
+                      <button className="btn sm" disabled={st.busy} onClick={() => st.start([d], "long")}>
+                        Long
+                      </button>
+                    </div>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {st.dialog}
     </>
   );
 }

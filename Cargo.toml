@@ -1,6 +1,6 @@
 [package]
 name = "fsview"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 rust-version = "1.82"
 description = "Disk, filesystem and storage-pool manager for Proxmox VE hosts"

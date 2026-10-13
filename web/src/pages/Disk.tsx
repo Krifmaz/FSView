@@ -277,6 +277,19 @@ export default function DiskPage({ name }: { name: string }) {
         </div>
       )}
       {!r && !sm?.standby && <div className="dim">No SMART data yet.</div>}
+      {!r && (
+        <div className="card between" style={{ marginBottom: 12 }}>
+          <span className="small dim">Self-tests run inside the drive and do not need SMART data first.</span>
+          <div className="row">
+            <button className="btn" disabled={busy} onClick={() => startTest("short")}>
+              Short test
+            </button>
+            <button className="btn" disabled={busy} onClick={() => startTest("long")}>
+              Long test
+            </button>
+          </div>
+        </div>
+      )}
       {r && (
         <>
           {(sm?.assessment.findings ?? []).map((f) => (

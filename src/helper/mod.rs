@@ -85,18 +85,30 @@ impl Server {
 
     /// Creates the socket with mode 0660 and the configured group.
     pub fn listen(&self) -> std::io::Result<UnixListener> {
-        let _ = std::fs::remove_file(&self.cfg.socket);
-        let old = nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o117));
-        let l = UnixListener::bind(&self.cfg.socket);
-        nix::sys::stat::umask(old);
-        let l = l?;
-        std::fs::set_permissions(&self.cfg.socket, std::fs::Permissions::from_mode(0o660))?;
-        if let (Some(g), true) = (self.cfg.socket_gid, nix::unistd::geteuid().is_root()) {
-            nix::unistd::chown(
-                &self.cfg.socket,
-                Some(nix::unistd::Uid::from_raw(0)),
-                Some(nix::unistd::Gid::from_raw(g)),
-            )?;
+        // Bind under a temporary name, fix mode/owner, then rename into
+        // place, so the final path never exists with loose permissions.
+        // (Changing the umask instead would affect every thread.)
+        let sock = &self.cfg.socket;
+        let dir = sock.parent().unwrap_or(std::path::Path::new("/"));
+        let tmp = dir.join(format!(
+            ".helper-{}.sock",
+            hex::encode(crate::auth::random_bytes::<6>())
+        ));
+        let l = UnixListener::bind(&tmp)?;
+        let fix = || -> std::io::Result<()> {
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o660))?;
+            if let (Some(g), true) = (self.cfg.socket_gid, nix::unistd::geteuid().is_root()) {
+                nix::unistd::chown(
+                    &tmp,
+                    Some(nix::unistd::Uid::from_raw(0)),
+                    Some(nix::unistd::Gid::from_raw(g)),
+                )?;
+            }
+            std::fs::rename(&tmp, sock)
+        };
+        if let Err(e) = fix() {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
         }
         Ok(l)
     }

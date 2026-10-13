@@ -30,13 +30,18 @@ export function relabelAction(disk: string, dev: { name: string; fstype: string;
       operation: `${op} ${dev.fstype.toUpperCase()} labels can only change while unmounted, so ${mountedAt} is unmounted first${inFstab ? " and mounted again afterwards" : ""}.`,
       confirmLabel: "Rename",
       morePlan: [`relabel ${dev.name} as ${label}`, ...(inFstab ? [`mount ${mountedAt}`] : [])],
-      done: () => `${dev.name} is now labelled ${label}.`,
+      done: () => `Unmounted ${mountedAt}.`,
       then: async () => {
-        await req();
-        if (inFstab) {
-          await api.post<WriteResult>("/api/mounts/mount", { target: mountedAt, confirmed: true });
-          return `Mounted again at ${mountedAt}.`;
+        // Always mount again, even when the rename fails.
+        let renameError: unknown = null;
+        try {
+          await req();
+        } catch (e) {
+          renameError = e;
         }
+        if (inFstab) await api.post<WriteResult>("/api/mounts/mount", { target: mountedAt, confirmed: true });
+        if (renameError) throw renameError;
+        return `Renamed to ${label}${inFstab ? ` and mounted again at ${mountedAt}` : ""}.`;
       },
     };
   }

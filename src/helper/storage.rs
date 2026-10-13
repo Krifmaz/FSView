@@ -823,6 +823,16 @@ impl Server {
             return Err(bad(format!("{} is not installed{pkg}", cmd[0])));
         }
         let mut actions = vec![Action::Run(cmd)];
+        // Label tools write the disk directly; udev (and so lsblk and
+        // /dev/disk/by-label) only notices after a change event.
+        if tool_exists("udevadm") {
+            actions.push(Action::Run(vec![
+                "udevadm".into(),
+                "trigger".into(),
+                "--action=change".into(),
+                dev.path.clone(),
+            ]));
+        }
         actions.extend(settle());
         Ok(Plan {
             targets: vec![dev.disk.clone()],

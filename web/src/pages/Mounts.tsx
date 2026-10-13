@@ -244,14 +244,21 @@ export default function MountsPage() {
           const notes: string[] = [];
           // Unmount first: XFS and NTFS labels only change while unmounted.
           if (e.mounted) await api.post<WriteResult>("/api/mounts/umount", { target: e.file, confirmed: true });
+          let renameError: unknown = null;
           if (relabel) {
-            await label_req();
-            notes.push(`Label is now ${label}.`);
+            try {
+              await label_req();
+              notes.push(`Label is now ${label}.`);
+            } catch (x) {
+              renameError = x;
+            }
           }
+          // Mount again even if the rename failed.
           if (e.mounted) {
             await api.post<WriteResult>("/api/mounts/mount", { target: mp, confirmed: true });
             notes.push(`Mounted at ${mp}.`);
           }
+          if (renameError) throw new Error(`${notes.join(" ")} Rename failed: ${explainError(renameError)}`);
           return notes.join(" ");
         },
       });

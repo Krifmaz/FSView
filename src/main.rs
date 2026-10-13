@@ -143,6 +143,14 @@ fn run_helper(path: &Path) -> Result<(), String> {
     if !nix::unistd::geteuid().is_root() {
         return Err("the helper must run as root".into());
     }
+    let ns = |p: &str| std::fs::read_link(p).ok();
+    if ns("/proc/self/ns/mnt") != ns("/proc/1/ns/mnt") {
+        eprintln!(
+            "fsview-helper: WARNING: running in a private mount namespace; mount \
+             information and hidden-data scans will not match the host. Remove \
+             PrivateTmp/ProtectHome/ProtectSystem/ProtectKernelModules from the unit."
+        );
+    }
     let cfg = config::load_helper(path)?;
     let u = nix::unistd::User::from_name(&cfg.client_user)
         .map_err(|e| e.to_string())?

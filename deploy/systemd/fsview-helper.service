@@ -12,11 +12,11 @@ RestartSec=2
 RuntimeDirectory=fsview
 RuntimeDirectoryMode=0755
 UMask=0027
-PrivateTmp=yes
-ProtectHome=read-only
+# No PrivateTmp/ProtectHome/ProtectKernelModules/ProtectSystem and similar:
+# they give the service its own mount namespace, so the helper would see
+# (and mount into) a private copy of the mount table instead of the host's.
+# Isolation comes from the socket peer check and the fixed operation set.
 NoNewPrivileges=yes
-ProtectKernelModules=yes
-ProtectClock=yes
 RestrictRealtime=yes
 LockPersonality=yes
 SystemCallArchitectures=native

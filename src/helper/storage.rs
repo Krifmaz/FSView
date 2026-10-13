@@ -146,6 +146,28 @@ fn label_of(inv: &Inventory, name: &str) -> String {
     String::new()
 }
 
+/// `p` is `t` or inside it.
+fn under(p: &str, t: &str) -> bool {
+    p == t || p.starts_with(&format!("{t}/"))
+}
+
+/// Path of a mergerfs branch entry ("/mnt/a=RW" -> "/mnt/a").
+fn branch_path(b: &str) -> &str {
+    b.split('=').next().unwrap_or(b)
+}
+
+/// Replaces the branch list of a running pool.
+fn set_branches(pool: &str, branches: &[String]) -> Action {
+    Action::Run(vec![
+        "setfattr".into(),
+        "-n".into(),
+        "user.mergerfs.branches".into(),
+        "-v".into(),
+        branches.join(":"),
+        format!("{pool}/.mergerfs"),
+    ])
+}
+
 /// First partition of a disk as the kernel will name it.
 fn first_partition(disk: &str) -> String {
     if disk.ends_with(|c: char| c.is_ascii_digit()) {
@@ -299,8 +321,17 @@ impl Server {
             return Err(bad("swap entries are not mounted here"));
         }
         let mounts = self.mounts()?;
+        let reattach = self.reattach_actions(&entries, &mounts, t);
         if mounts.iter().any(|m| m.target == t) {
-            return Err(bad(format!("{t} is already mounted")));
+            if reattach.is_empty() {
+                return Err(bad(format!("{t} is already mounted")));
+            }
+            return Ok(Plan {
+                targets: vec![t.into()],
+                actions: reattach,
+                summary: format!("re-attach {t} to its pool"),
+                detail: String::new(),
+            });
         }
         if is_mergerfs(e) {
             if !tool_exists("mergerfs") {
@@ -368,10 +399,16 @@ impl Server {
             c
         };
         actions.push(Action::Run(cmd));
+        let rejoin = !reattach.is_empty();
+        actions.extend(reattach);
         Ok(Plan {
             targets: vec![t.into()],
             actions,
-            summary: format!("mount {t}"),
+            summary: if rejoin {
+                format!("mount {t} and re-attach it to its pool")
+            } else {
+                format!("mount {t}")
+            },
             detail: String::new(),
         })
     }
@@ -412,18 +449,38 @@ impl Server {
                 n.target
             )));
         }
-        // A mounted pool with a branch here must go first.
+        // A mounted pool with a branch here keeps running without it: the
+        // branch is detached live first. A pool that would be left empty
+        // has to be unmounted instead.
+        let mut actions = vec![];
+        let mut detached = vec![];
         for e in self.fstab_entries()?.iter().filter(|e| is_mergerfs(e)) {
-            if e.file != t
-                && mounts.iter().any(|m| m.target == e.file)
-                && mergerfs_branches(e)
-                    .iter()
-                    .any(|b| b == t || b.starts_with(&format!("{t}/")))
+            if e.file == t
+                || !mounts.iter().any(|m| m.target == e.file)
+                || !mergerfs_branches(e).iter().any(|b| under(b, t))
             {
+                continue;
+            }
+            let Some(live) = self.live_branches(&e.file) else {
                 return Err(bad(format!(
-                    "pool {} uses {t}; unmount the pool first",
+                    "pool {} uses {t}; unmount the pool first (install the attr package to let FSView detach disks from a running pool)",
                     e.file
                 )));
+            };
+            let keep: Vec<String> = live
+                .iter()
+                .filter(|b| !under(branch_path(b), t))
+                .cloned()
+                .collect();
+            if keep.is_empty() {
+                return Err(bad(format!(
+                    "{t} is the only disk in pool {}; unmount the pool first",
+                    e.file
+                )));
+            }
+            if keep.len() != live.len() {
+                actions.push(set_branches(&e.file, &keep));
+                detached.push(e.file.clone());
             }
         }
         if let Some(users) = self.mount_users(t) {
@@ -431,12 +488,86 @@ impl Server {
                 "{t} is in use by {users}; stop those first (for containers or VMs, shut them down)"
             )));
         }
+        actions.push(Action::Run(vec!["umount".into(), t.into()]));
         Ok(Plan {
             targets: vec![t.into()],
-            actions: vec![Action::Run(vec!["umount".into(), t.into()])],
-            summary: format!("unmount {t} ({})", m.source),
+            actions,
+            summary: if detached.is_empty() {
+                format!("unmount {t} ({})", m.source)
+            } else {
+                format!(
+                    "unmount {t} ({}); pool {} keeps running without it",
+                    m.source,
+                    detached.join(", ")
+                )
+            },
             detail: String::new(),
         })
+    }
+
+    /// Branches of a running mergerfs pool, as mergerfs reports them
+    /// ("/mnt/a=RW", ...). None if they cannot be read.
+    fn live_branches(&self, pool: &str) -> Option<Vec<String>> {
+        if !tool_exists("getfattr") || !tool_exists("setfattr") {
+            return None;
+        }
+        let ctl = format!("{pool}/.mergerfs");
+        let r = self
+            .runner
+            .run(
+                "getfattr",
+                &["--only-values", "-n", "user.mergerfs.branches", &ctl],
+            )
+            .ok()?;
+        if r.code != 0 {
+            return None;
+        }
+        let v = String::from_utf8_lossy(&r.stdout);
+        Some(
+            v.trim()
+                .split(':')
+                .filter(|b| !b.is_empty())
+                .map(str::to_string)
+                .collect(),
+        )
+    }
+
+    /// After `t` is mounted (or while it is mounted but detached), puts
+    /// its branches back into running pools, in fstab order.
+    fn reattach_actions(&self, entries: &[FsEntry], mounts: &[Mount], t: &str) -> Vec<Action> {
+        let mut out = vec![];
+        for e in entries.iter().filter(|e| is_mergerfs(e)) {
+            if e.file == t || !mounts.iter().any(|m| m.target == e.file) {
+                continue;
+            }
+            let wanted: Vec<String> = e
+                .spec
+                .trim_start_matches("mergerfs#")
+                .split(':')
+                .filter(|b| !b.is_empty())
+                .map(str::to_string)
+                .collect();
+            if !wanted.iter().any(|b| under(branch_path(b), t)) {
+                continue;
+            }
+            let Some(live) = self.live_branches(&e.file) else {
+                continue;
+            };
+            let live_paths: Vec<&str> = live.iter().map(|b| branch_path(b)).collect();
+            let desired: Vec<String> = wanted
+                .iter()
+                .filter(|b| {
+                    let p = branch_path(b);
+                    under(p, t) || live_paths.contains(&p)
+                })
+                .cloned()
+                .collect();
+            let desired_paths: Vec<&str> = desired.iter().map(|b| branch_path(b)).collect();
+            if desired_paths != live_paths {
+                out.push(set_branches(&e.file, &desired));
+            }
+        }
+        out
     }
 
     /// Processes using a mount, e.g. "plex (1234), smbd (99)".
@@ -660,6 +791,14 @@ impl Server {
             ),
             "vfat" => (11, s(&["fatlabel", &dev.path, &p.label.to_uppercase()])),
             "exfat" => (15, s(&["exfatlabel", &dev.path, &p.label])),
+            "ntfs" => {
+                if mounted.is_some() {
+                    return Err(bad(
+                        "NTFS labels can only be changed while unmounted; unmount it first",
+                    ));
+                }
+                (32, s(&["ntfslabel", &dev.path, &p.label]))
+            }
             "" => return Err(bad("no filesystem on this device")),
             other => {
                 return Err(bad(format!(
@@ -674,7 +813,14 @@ impl Server {
             )));
         }
         if !tool_exists(&cmd[0]) {
-            return Err(bad(format!("{} is not installed", cmd[0])));
+            let pkg = match cmd[0].as_str() {
+                "ntfslabel" => " (apt install ntfs-3g)",
+                "fatlabel" => " (apt install dosfstools)",
+                "exfatlabel" => " (apt install exfatprogs)",
+                "xfs_admin" => " (apt install xfsprogs)",
+                _ => "",
+            };
+            return Err(bad(format!("{} is not installed{pkg}", cmd[0])));
         }
         let mut actions = vec![Action::Run(cmd)];
         actions.extend(settle());

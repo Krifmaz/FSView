@@ -57,6 +57,6 @@ jobs:
         run: |
           docker run --rm --privileged -v /dev:/dev -v "$PWD":/src -w /tmp debian:trixie bash -euc '
             apt-get update -qq
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends util-linux mount e2fsprogs smartmontools pciutils psmisc gdisk mergerfs fuse3 >/dev/null
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends util-linux mount e2fsprogs smartmontools pciutils psmisc gdisk mergerfs fuse3 attr >/dev/null
             /src/it.test --test-threads=1
           '

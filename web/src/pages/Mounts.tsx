@@ -6,6 +6,7 @@ import { ErrorBox, Loading, UsageBar } from "../components";
 import type { FsEntry, FstabDevice, FstabDoc, FstabState, StorageEntry, StorageView, WriteResult } from "../types";
 import { fmtBytes, useFetch } from "../util";
 import { HealthBadge, useHealthMap } from "../life";
+import { LABEL_FS, labelProblem, relabelAction } from "../relabel";
 
 const MOUNTABLE = ["ext2", "ext3", "ext4", "xfs", "btrfs", "vfat", "exfat", "ntfs", "ntfs3"];
 const MP_RE = /^\/(mnt|media|srv|data|storage|pool|tank)(\/[A-Za-z0-9._@+-]+)+$/;
@@ -52,7 +53,8 @@ function moveMountpoint(doc: FstabDoc, from: string, to: string): FstabDoc {
 function RenameDialog({ e, onClose, onStart }: { e: StorageEntry; onClose: () => void; onStart: (label: string, mountpoint: string) => void }) {
   const [label, setLabel] = useState(e.device?.label ?? "");
   const [mp, setMp] = useState(e.file);
-  const canLabel = !!e.device && ["ext2", "ext3", "ext4", "xfs", "btrfs", "vfat", "exfat"].includes(e.device.fstype);
+  const canLabel = !!e.device && LABEL_FS.includes(e.device.fstype);
+  const problem = canLabel && label !== (e.device?.label ?? "") ? labelProblem(e.device!.fstype, label) : null;
   const changed = (canLabel && label !== (e.device?.label ?? "")) || mp !== e.file;
   const mpOk = mp === e.file || MP_RE.test(mp);
   return (
@@ -73,6 +75,10 @@ function RenameDialog({ e, onClose, onStart }: { e: StorageEntry; onClose: () =>
             <input className="mono" value={mp} onChange={(x) => setMp(x.target.value.trim())} />
           </label>
           {!mpOk && <div className="small" style={{ color: "var(--warn)" }}>Use a folder under /mnt, /media, /srv, /data, /storage, /pool or /tank.</div>}
+          {problem && <div className="small" style={{ color: "var(--warn)" }}>{problem}</div>}
+          {canLabel && e.mounted && ["xfs", "ntfs"].includes(e.device!.fstype) && label !== (e.device?.label ?? "") && (
+            <div className="small dim">{e.device!.fstype.toUpperCase()} is unmounted briefly while the label changes.</div>
+          )}
           {mp !== e.file && (
             <div className="alert info small">
               Programs that use {e.file} (Plex libraries, Docker volumes, LXC bind mounts, SMB shares) must be pointed at {mp} afterwards. Pools that use this disk are updated automatically.
@@ -82,7 +88,7 @@ function RenameDialog({ e, onClose, onStart }: { e: StorageEntry; onClose: () =>
             <button className="btn ghost" onClick={onClose}>
               Cancel
             </button>
-            <button className="btn primary" disabled={!changed || !mpOk || (canLabel && !label)} onClick={() => onStart(label, mp)}>
+            <button className="btn primary" disabled={!changed || !mpOk || !!problem || (canLabel && !label)} onClick={() => onStart(label, mp)}>
               Continue
             </button>
           </div>
@@ -92,7 +98,6 @@ function RenameDialog({ e, onClose, onStart }: { e: StorageEntry; onClose: () =>
   );
 }
 
-const LABEL_FS = ["ext2", "ext3", "ext4", "xfs", "btrfs", "vfat", "exfat"];
 
 function AddMountDialog({ devices, onClose, onStart }: { devices: FstabDevice[]; onClose: () => void; onStart: (d: FstabDevice, mp: string, mountNow: boolean, label: string | null) => void }) {
   const [sel, setSel] = useState(devices[0]?.path ?? "");
@@ -196,7 +201,11 @@ export default function MountsPage() {
       url: "/api/mounts/umount",
       body: { target: e.file },
       title: `Unmount ${e.file}`,
-      operation: `Unmount ${e.file}${e.source ? ` (${e.source})` : ""}. Programs using it must be stopped first; FSView checks this before running.`,
+      operation:
+        `Unmount ${e.file}${e.source ? ` (${e.source})` : ""}. Programs using it must be stopped first; FSView checks this before running.` +
+        (data.pools.some((p) => p.mounted && p.branches.some((b) => b.mount === e.file))
+          ? " The pool keeps running without this disk and takes it back when you mount it again; fstab and boot are not changed."
+          : ""),
       confirmLabel: "Unmount",
       done: () => `${e.file} is unmounted.`,
     });
@@ -208,14 +217,7 @@ export default function MountsPage() {
       api.post<WriteResult>(`/api/disks/${e.device!.disk}/label`, { device: e.device!.name, label, confirmed: true });
     try {
       if (mp === e.file) {
-        act.start({
-          url: `/api/disks/${e.device!.disk}/label`,
-          body: { device: e.device!.name, label },
-          title: `Rename disk ${e.device!.name}`,
-          operation: `Change the label of ${e.device!.name} from "${e.device!.label || "(none)"}" to "${label}". Data is not touched.`,
-          confirmLabel: "Rename",
-          done: () => `${e.device!.name} is now labelled ${label}.`,
-        });
+        act.start(relabelAction(e.device!.disk, e.device!, label, e.mounted ? e.file : undefined, true));
         return;
       }
       if (e.mounted) {
@@ -233,18 +235,20 @@ export default function MountsPage() {
           (e.mounted ? ` Then unmount ${e.file} and mount it at ${mp}.` : ""),
         confirmLabel: "Rename",
         morePlan: [
+          ...(e.mounted ? [`umount ${e.file}`] : []),
           ...(relabel ? [`relabel ${e.device!.name} as ${label}`] : []),
-          ...(e.mounted ? [`umount ${e.file}`, `mount ${mp}`] : []),
+          ...(e.mounted ? [`mount ${mp}`] : []),
         ],
         done: () => `${e.file} is now ${mp}.`,
         then: async () => {
           const notes: string[] = [];
+          // Unmount first: XFS and NTFS labels only change while unmounted.
+          if (e.mounted) await api.post<WriteResult>("/api/mounts/umount", { target: e.file, confirmed: true });
           if (relabel) {
             await label_req();
             notes.push(`Label is now ${label}.`);
           }
           if (e.mounted) {
-            await api.post<WriteResult>("/api/mounts/umount", { target: e.file, confirmed: true });
             await api.post<WriteResult>("/api/mounts/mount", { target: mp, confirmed: true });
             notes.push(`Mounted at ${mp}.`);
           }

@@ -376,7 +376,8 @@ impl Demo {
                         .any(|m| m.target == "/mnt/drivepool")
                 {
                     return Err(bad(
-                        "pool /mnt/drivepool uses /mnt/media1; unmount the pool first".into(),
+                        "/mnt/media1 is the only disk in pool /mnt/drivepool; unmount the pool first"
+                            .into(),
                     ));
                 }
                 (vec![format!("umount {target}")], vec![target.clone()])

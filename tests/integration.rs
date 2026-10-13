@@ -709,9 +709,47 @@ fn storage_ops_on_loop_devices() {
                 || Path::new(&format!("{mb}/data/hello")).exists(),
             "file written through the pool lands on a branch"
         );
-        // A disk under a mounted pool cannot be unmounted.
-        let e = op(&h, OP_UMOUNT, serde_json::json!({ "target": ma }), "").unwrap_err();
-        assert!(e.msg.contains("unmount the pool first"), "{}", e.msg);
+        // Unmounting a disk detaches it from the running pool; the pool
+        // keeps serving the other disk and takes it back on mount.
+        let live = |h: &Helper| {
+            let _ = h;
+            run(
+                "getfattr",
+                &[
+                    "--only-values",
+                    "-n",
+                    "user.mergerfs.branches",
+                    &format!("{mp}/.mergerfs"),
+                ],
+            )
+        };
+        if have("setfattr") {
+            let r = op(&h, OP_UMOUNT, serde_json::json!({ "target": ma }), "")
+                .unwrap_or_else(|e| panic!("detach+umount: {}", e.msg));
+            assert!(
+                r.plan[0].starts_with("setfattr -n user.mergerfs.branches"),
+                "{:?}",
+                r.plan
+            );
+            assert!(
+                run("findmnt", &["-n", "-o", "TARGET", &mp]) == mp,
+                "pool still mounted"
+            );
+            let l = live(&h);
+            assert!(!l.contains(&ma) && l.contains(&mb), "{l}");
+            std::fs::write(format!("{mp}/while-detached"), "x").unwrap();
+            assert!(Path::new(&format!("{mb}/data/while-detached")).exists());
+            op(&h, OP_MOUNT, serde_json::json!({ "target": ma }), "")
+                .unwrap_or_else(|e| panic!("mount+reattach: {}", e.msg));
+            let l = live(&h);
+            assert!(l.contains(&ma) && l.contains(&mb), "{l}");
+            assert!(l.find(&ma) < l.find(&mb), "fstab order restored: {l}");
+            // The last disk of a pool cannot be detached.
+            op(&h, OP_UMOUNT, serde_json::json!({ "target": mb }), "").unwrap();
+            let e = op(&h, OP_UMOUNT, serde_json::json!({ "target": ma }), "").unwrap_err();
+            assert!(e.msg.contains("only disk"), "{}", e.msg);
+            op(&h, OP_MOUNT, serde_json::json!({ "target": mb }), "").unwrap();
+        }
         let mounts: Vec<MountInfo> = serde_json::from_value(
             call(
                 &h,

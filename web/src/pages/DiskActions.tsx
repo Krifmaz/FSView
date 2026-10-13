@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useAction, explainError } from "../actions";
 import type { Disk, FstabState, StorageView, WriteResult } from "../types";
 import { fmtBytes, useFetch } from "../util";
+import { LABEL_FS, labelProblem, relabelAction } from "../relabel";
 
 const MEMBER = ["linux_raid_member", "LVM2_member", "zfs_member", "crypto_LUKS", "swap"];
 const FS_TYPES: [string, string][] = [
@@ -59,6 +60,7 @@ export default function DiskActions({ d, onChanged }: { d: Disk; onChanged: () =
     storage.reload();
   });
   const [fmt, setFmt] = useState<FormatForm | null>(null);
+  const [renaming, setRenaming] = useState<{ f: Fs; label: string } | null>(null);
   const fss = filesystems(d);
   const writes = storage.data?.writes_enabled ?? true;
   const tools = storage.data?.tools ?? {};
@@ -89,7 +91,11 @@ export default function DiskActions({ d, onChanged }: { d: Disk; onChanged: () =
   const mount = (file: string) =>
     act.start({ url: "/api/mounts/mount", body: { target: file }, title: `Mount ${file}`, operation: `Mount ${file} using its fstab entry.`, confirmLabel: "Mount", done: () => `${file} is mounted.` });
   const umount = (file: string) =>
-    act.start({ url: "/api/mounts/umount", body: { target: file }, title: `Unmount ${file}`, operation: `Unmount ${file}. Programs using it must be stopped first; FSView checks this before running.`, confirmLabel: "Unmount", done: () => `${file} is unmounted.` });
+    act.start({ url: "/api/mounts/umount", body: { target: file }, title: `Unmount ${file}`, operation:
+        `Unmount ${file}. Programs using it must be stopped first; FSView checks this before running.` +
+        (storage.data?.pools.some((p) => p.mounted && p.branches.some((b) => b.mount === file))
+          ? " The pool keeps running without this disk and takes it back when you mount it again; fstab and boot are not changed."
+          : ""), confirmLabel: "Unmount", done: () => `${file} is unmounted.` });
   const locate = (on: boolean) =>
     act.start({
       url: `/api/disks/${d.name}/locate`,
@@ -218,6 +224,11 @@ export default function DiskActions({ d, onChanged }: { d: Disk; onChanged: () =
                           </button>
                         </>
                       )}
+                      {LABEL_FS.includes(f.fstype) && !d.protected && (
+                        <button className="btn sm" disabled={act.busy || !writes} onClick={() => setRenaming({ f, label: f.label })}>
+                          Rename
+                        </button>
+                      )}
                       {f.name !== d.name && (
                         <button className="btn sm" disabled={act.busy || !writes || d.protected || f.mounted.length > 0 || member} onClick={() => openFormat(f.name, false, f.label)}>
                           <Eraser size={14} /> Format
@@ -247,6 +258,46 @@ export default function DiskActions({ d, onChanged }: { d: Disk; onChanged: () =
         </table>
       </div>
 
+      {renaming && (
+        <div className="modal-bg" role="dialog" aria-modal="true" onClick={() => setRenaming(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Rename {renaming.f.name}</h2>
+            <div className="stack">
+              <label className="field">
+                <span>Label</span>
+                <input className="mono" autoFocus maxLength={16} value={renaming.label} onChange={(e) => setRenaming({ ...renaming, label: e.target.value.replace(/[^A-Za-z0-9._-]/g, "") })} />
+              </label>
+              {labelProblem(renaming.f.fstype, renaming.label) && renaming.label && (
+                <div className="small" style={{ color: "var(--warn)" }}>
+                  {labelProblem(renaming.f.fstype, renaming.label)}
+                </div>
+              )}
+              <div className="small dim">
+                Only the name changes. fstab mounts disks by UUID, so boot and pools are not affected; the mount folder stays the same (change it on the Mounts page).
+                {renaming.f.mounted.length > 0 && ["xfs", "ntfs"].includes(renaming.f.fstype) && ` ${renaming.f.fstype.toUpperCase()} is unmounted briefly while the label changes.`}
+              </div>
+              <div className="row" style={{ justifyContent: "flex-end" }}>
+                <button className="btn ghost" onClick={() => setRenaming(null)}>
+                  Cancel
+                </button>
+                <button
+                  className="btn primary"
+                  disabled={!renaming.label || renaming.label === renaming.f.label || !!labelProblem(renaming.f.fstype, renaming.label)}
+                  onClick={() => {
+                    const { f, label } = renaming;
+                    const at = f.mounted.find((m) => m !== "[SWAP]");
+                    const inFstab = !!(at && storage.data?.entries.some((e) => e.file === at));
+                    setRenaming(null);
+                    act.start(relabelAction(d.name, f, label, at, inFstab));
+                  }}
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {fmt && (
         <div className="modal-bg" role="dialog" aria-modal="true" onClick={() => setFmt(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>

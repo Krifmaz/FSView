@@ -76,13 +76,14 @@ else
   BINARY="$SRC/fsview"
 fi
 
-info "installing packages (smartmontools, pciutils, sg3-utils, psmisc, gdisk)"
+info "installing packages (smartmontools, pciutils, sg3-utils, psmisc, gdisk, attr)"
 NEED=()
 command -v smartctl >/dev/null || NEED+=(smartmontools)
 command -v lspci >/dev/null || NEED+=(pciutils)
 command -v sg_ses >/dev/null || NEED+=(sg3-utils)   # SAS shelf status
 command -v fuser >/dev/null || NEED+=(psmisc)       # "in use by" on unmount
 command -v sgdisk >/dev/null || NEED+=(gdisk)       # new partition tables
+command -v setfattr >/dev/null || NEED+=(attr)      # detach disks from a running pool
 if [ ${#NEED[@]} -gt 0 ]; then
   apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${NEED[@]}"
 fi

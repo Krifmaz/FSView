@@ -69,6 +69,7 @@ export interface HealthView {
   model?: string;
   standby: boolean;
   self_test_running?: Running;
+  life?: Life;
   updated_at: string | null;
   checked_at: string | null;
   error?: string;
@@ -222,9 +223,24 @@ export interface SmartReport {
   notes?: string[];
 }
 
+export interface Life {
+  age_hours?: number;
+  written_bytes?: number;
+  read_bytes?: number;
+  workload_bytes_per_year?: number;
+  wear_used_pct?: number;
+  remaining_pct?: number;
+  remaining_hours?: number;
+  remaining_written_bytes?: number;
+  basis: string;
+  level: "ok" | "warn" | "crit";
+  verdict: string;
+}
+
 export interface SmartEntry {
   report?: SmartReport;
   assessment: { status: Status; findings?: Finding[] };
+  life?: Life;
   updated_at: string | null;
   checked_at: string | null;
   standby: boolean;
@@ -315,6 +331,7 @@ export interface Settings {
   late_device_sec: number;
   event_retention: number;
   ignored_elements?: string[];
+  skip_confirm?: boolean;
 }
 
 export interface StatusInfo {

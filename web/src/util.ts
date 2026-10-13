@@ -105,3 +105,14 @@ export function useHashRoute(): string[] {
   }, []);
   return route;
 }
+
+/** "3.2 years", "8 months", "12 days" for an hour count. */
+export function fmtDuration(h?: number | null): string {
+  if (h === undefined || h === null) return "–";
+  const y = h / 8766;
+  if (y >= 1.95) return `${y.toFixed(1)} years`;
+  const m = h / 730.5;
+  if (m >= 1.5) return `${Math.round(m)} months`;
+  const d = Math.round(h / 24);
+  return `${d} day${d === 1 ? "" : "s"}`;
+}

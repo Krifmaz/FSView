@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, ApiError } from "./api";
 import { ConfirmDialog, type ConfirmSpec } from "./components";
+import { confirmSkipped } from "./actions";
 import type { Disk } from "./types";
 
 type Test = "short" | "long" | "abort";
@@ -22,6 +23,10 @@ export function useSelfTest(onDone?: () => void) {
 
   const start = async (disks: Disk[], test: Test, minutes?: number) => {
     setMsg(null);
+    if (confirmSkipped()) {
+      await run({ disks, test } as never);
+      return;
+    }
     setBusy(true);
     try {
       const plans: string[] = [];
@@ -59,27 +64,28 @@ export function useSelfTest(onDone?: () => void) {
     }
   };
 
-  const run = async () => {
-    if (!spec) return;
+  const run = async (direct?: { disks: Disk[]; test: Test }) => {
+    const job = direct ?? spec;
+    if (!job) return;
     setBusy(true);
     const failed: string[] = [];
-    for (const d of spec.disks) {
+    for (const d of job.disks) {
       try {
-        await api.post(`/api/disks/${d.name}/selftest`, { test: spec.test, confirmed: true });
+        await api.post(`/api/disks/${d.name}/selftest`, { test: job.test, confirmed: true });
       } catch (e) {
         failed.push(`${d.name}: ${explain(e)}`);
       }
     }
-    const started = spec.disks.length - failed.length;
+    const started = job.disks.length - failed.length;
     setMsg(
       failed.length
         ? { kind: "error", text: `${started} started, ${failed.length} failed:\n${failed.join("\n")}` }
         : {
             kind: "info",
             text:
-              spec.test === "abort"
+              job.test === "abort"
                 ? "Self-test aborted."
-                : `${spec.test === "short" ? "Short" : "Long"} self-test started on ${spec.disks.map((d) => d.name).join(", ")}. Progress shows on each disk's page.`,
+                : `${job.test === "short" ? "Short" : "Long"} self-test started on ${job.disks.map((d) => d.name).join(", ")}. Progress shows on each disk's page.`,
           },
     );
     setSpec(null);
@@ -87,7 +93,7 @@ export function useSelfTest(onDone?: () => void) {
     if (onDone) setTimeout(onDone, 6000);
   };
 
-  const dialog = spec ? <ConfirmDialog spec={spec} busy={busy} onConfirm={run} onCancel={() => setSpec(null)} /> : null;
+  const dialog = spec ? <ConfirmDialog spec={spec} busy={busy} onConfirm={() => run()} onCancel={() => setSpec(null)} /> : null;
   const message = msg ? (
     <div className={`alert ${msg.kind}`} style={{ whiteSpace: "pre-wrap" }}>
       {msg.text}

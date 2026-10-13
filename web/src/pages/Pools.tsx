@@ -6,6 +6,7 @@ import { ErrorBox, Loading, UsageBar } from "../components";
 import type { FsEntry, FstabDoc, FstabPreview, FstabState, Pool, StorageEntry, StorageView, WriteResult } from "../types";
 import { fmtBytes, useFetch } from "../util";
 import { DiffView } from "./Fstab";
+import { HealthBadge, useHealthMap } from "../life";
 
 const POLICIES: [string, string][] = [
   ["mfs", "Most free space: new files go to the disk with the most free space (recommended)"],
@@ -343,6 +344,7 @@ function PoolEditor({ form, data, onClose, onSaved }: { form: Form; data: Storag
 export default function PoolsPage() {
   const { data, error, loading, reload } = useFetch(() => api.get<StorageView>("/api/storage"), [], 30000);
   const act = useAction(reload);
+  const health = useHealthMap();
   const [editor, setEditor] = useState<Form | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const newForm = useMemo<Form>(() => ({ mountpoint: "/mnt/pool", branches: [], policy: "mfs", minfree: "20G", cache: "off", moveonenospc: true, extra: "", mountNow: true }), []);
@@ -410,6 +412,8 @@ export default function PoolsPage() {
       <div className="stack">
         {data.pools.map((p) => {
           const missing = p.branches.filter((b) => !b.mounted);
+          const disks = p.branches.map((b) => data.entries.find((e) => e.file === b.mount)?.device?.disk).filter((x): x is string => !!x);
+          const worst = disks.map((d) => health.get(d)?.status).find((s) => s === "crit") ?? disks.map((d) => health.get(d)?.status).find((s) => s === "warn");
           const unguarded = p.branches.filter((b) => b.mount && !b.required);
           return (
             <div key={p.file} className="card">
@@ -421,6 +425,11 @@ export default function PoolsPage() {
                   </h2>
                   {p.mounted ? <span className="badge ok">mounted</span> : <span className="badge neutral">not mounted</span>}
                   {missing.length > 0 && <span className="badge crit">{missing.length} disk{missing.length > 1 ? "s" : ""} missing</span>}
+                  {worst && (
+                    <span className={`badge ${worst}`} title="Health of the disks in this pool">
+                      {worst === "crit" ? "a disk is failing" : "a disk has warnings"}
+                    </span>
+                  )}
                   <span className="badge info">policy {p.policy}</span>
                 </div>
                 <div className="row">
@@ -470,9 +479,12 @@ export default function PoolsPage() {
                           <td className="mono">{b.path}</td>
                           <td className="small">
                             {owner?.device ? (
-                              <a href={`#/disk/${owner.device.disk}`}>
-                                {owner.device.name} {owner.device.label && <b>{owner.device.label}</b>}
-                              </a>
+                              <span className="row" style={{ gap: 6 }}>
+                                <a href={`#/disk/${owner.device.disk}`}>
+                                  {owner.device.name} {owner.device.label && <b>{owner.device.label}</b>}
+                                </a>
+                                <HealthBadge disk={owner.device.disk} health={health.get(owner.device.disk)} />
+                              </span>
                             ) : (
                               <span className="dim">{b.mount ?? "–"}</span>
                             )}

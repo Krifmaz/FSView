@@ -32,6 +32,16 @@ export function explainError(e: unknown): string {
 
 type Msg = { kind: "info" | "error" | "ok"; text: string; output?: string };
 
+// Settings → "Ask before non-destructive actions". Destructive actions
+// always show the dialog with typed confirmation.
+let skipConfirm = false;
+export function setSkipConfirm(v: boolean) {
+  skipConfirm = v;
+}
+export function confirmSkipped() {
+  return skipConfirm;
+}
+
 /**
  * Write action flow shared by every page: dry run (the dialog shows the
  * exact commands the helper will run), confirmation (typed for
@@ -44,6 +54,10 @@ export function useAction(onDone?: () => void) {
 
   const start = async (a: ActionSpec) => {
     setMsg(null);
+    if (skipConfirm && !a.destructive) {
+      await execute(a, "");
+      return;
+    }
     setBusy(true);
     try {
       const dry = await api.post<WriteResult>(a.url, { ...a.body, dry_run: true });
@@ -67,8 +81,10 @@ export function useAction(onDone?: () => void) {
   };
 
   const run = async (typed: string) => {
-    if (!spec) return;
-    const a = spec.a;
+    if (spec) await execute(spec.a, typed);
+  };
+
+  const execute = async (a: ActionSpec, typed: string) => {
     setBusy(true);
     try {
       const r = await api.post<WriteResult>(a.url, { ...a.body, confirmed: true, confirm_text: a.destructive ? typed : undefined });

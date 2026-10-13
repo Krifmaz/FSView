@@ -3,6 +3,7 @@ import { ErrorBox, Loading, StatusBadge, Temp } from "../components";
 import type { Overview } from "../types";
 import { fmtBytes, fmtHours, slotLabel, timeAgo, useFetch } from "../util";
 import { useSelfTest } from "../selftest";
+import { LifeCell } from "../life";
 
 const order: Record<string, number> = { crit: 0, warn: 1, unknown: 2, ok: 3 };
 
@@ -38,7 +39,7 @@ export default function HealthPage() {
               <th>Status</th>
               <th>Disk</th>
               <th>Temp</th>
-              <th>Power-on</th>
+              <th>Age / life left</th>
               <th>Findings</th>
               <th>Checked</th>
               <th>Self-test</th>
@@ -60,7 +61,7 @@ export default function HealthPage() {
                 <td>
                   <Temp c={d.health?.temperature_c} />
                 </td>
-                <td className="small">{fmtHours(d.health?.power_on_hours)}</td>
+                <td style={{ minWidth: 150 }}>{d.health?.life ? <LifeCell life={d.health.life} /> : <span className="small">{fmtHours(d.health?.power_on_hours)}</span>}</td>
                 <td className="small">
                   {d.health?.standby && <div className="dim">in standby (last data kept)</div>}
                   {d.health?.error && <div style={{ color: "var(--crit)" }}>{d.health.error}</div>}

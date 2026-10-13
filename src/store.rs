@@ -33,6 +33,10 @@ pub struct Settings {
     /// Enclosure elements the user marked as expected (keys from
     /// `EnclosureElement::key`), e.g. empty PSU bays.
     pub ignored_elements: Vec<String>,
+    /// Run non-destructive actions (mount, unmount, self-tests, rename...)
+    /// without a confirmation dialog. Destructive ones always need the
+    /// typed confirmation.
+    pub skip_confirm: bool,
 }
 
 impl Default for Settings {
@@ -42,6 +46,7 @@ impl Default for Settings {
             late_device_sec: 60,
             event_retention: 20000,
             ignored_elements: vec![],
+            skip_confirm: false,
         }
     }
 }

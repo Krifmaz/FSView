@@ -57,6 +57,8 @@ pub struct SmartEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub report: Option<Report>,
     pub assessment: Assessment,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub life: Option<smart::Life>,
     pub updated_at: Option<DateTime<Utc>>,
     pub checked_at: Option<DateTime<Utc>>,
     pub standby: bool,
@@ -313,6 +315,10 @@ impl App {
             .as_ref()
             .map(|r| smart::evaluate(r, &thresholds))
             .unwrap_or_default();
+        e.life = e
+            .report
+            .as_ref()
+            .map(|r| smart::lifespan(r, &e.assessment.status));
         m.insert(dev.into(), e.clone());
         e
     }
@@ -322,6 +328,7 @@ impl App {
         let mut e = self.smart.lock().unwrap().get(dev).cloned()?;
         if let Some(r) = &e.report {
             e.assessment = smart::evaluate(r, &self.store.settings().thresholds);
+            e.life = Some(smart::lifespan(r, &e.assessment.status));
         }
         Some(e)
     }

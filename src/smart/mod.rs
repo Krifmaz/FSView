@@ -3,7 +3,10 @@
 
 mod eval;
 
-pub use eval::{evaluate, worse, Assessment, Finding, Thresholds, CRIT, OK, UNKNOWN, WARN};
+pub use eval::{
+    evaluate, lifespan, worse, Assessment, Finding, Life, Thresholds, CRIT, HDD_DESIGN_HOURS, OK,
+    UNKNOWN, WARN,
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -109,6 +112,16 @@ pub struct Report {
     pub nvme_unsafe_shutdowns: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nvme_data_written_tb: Option<f64>,
+
+    /// Lifetime host writes/reads in bytes, when the drive reports them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_bytes: Option<u64>,
+    /// Flash endurance used (0-100+), from NVMe percentage_used, SAS SSD
+    /// endurance indicator or an ATA SSD wear attribute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wear_used_pct: Option<i64>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attributes: Vec<Attribute>,
@@ -265,6 +278,49 @@ fn parse_ata(r: &Value, rep: &mut Report) {
         }
         rep.attributes.push(attr);
     }
+    // Lifetime traffic and SSD wear.
+    let block = uint(r, &["logical_block_size"]).unwrap_or(512);
+    for a in &rep.attributes {
+        if a.raw <= 0 {
+            continue;
+        }
+        let n = a.name.to_ascii_lowercase();
+        let unit = if n.contains("32mib") {
+            32 << 20
+        } else if n.contains("gib") {
+            1 << 30
+        } else if n.contains("lba") || n.contains("sector") {
+            block
+        } else {
+            0
+        };
+        let bytes = (a.raw as u64).saturating_mul(unit);
+        match a.id {
+            241 | 246 if unit > 0 => {
+                rep.written_bytes.get_or_insert(bytes);
+            }
+            242 if unit > 0 => {
+                rep.read_bytes.get_or_insert(bytes);
+            }
+            _ => {}
+        }
+        // Normalized value of these attributes is "life remaining %".
+        if [
+            "wear_leveling_count",
+            "ssd_life_left",
+            "media_wearout_indicator",
+            "percent_lifetime_remain",
+            "remaining_lifetime_perc",
+            "percent_life_remaining",
+        ]
+        .contains(&n.as_str())
+            && rep.rotation_rate == 0
+            && (1..=100).contains(&a.value)
+        {
+            rep.wear_used_pct.get_or_insert(100 - a.value);
+        }
+    }
+
     // Error log: prefer the extended log when present.
     let log = at(r, &["ata_smart_error_log", "extended"])
         .filter(|e| e.get("count").is_some())
@@ -341,6 +397,9 @@ fn parse_nvme(r: &Value, rep: &mut Report) {
         // One data unit is 1000 512-byte blocks.
         rep.nvme_data_written_tb =
             uint(h, &["data_units_written"]).map(|d| d as f64 * 512000.0 / 1e12);
+        rep.written_bytes = uint(h, &["data_units_written"]).map(|d| d.saturating_mul(512_000));
+        rep.read_bytes = uint(h, &["data_units_read"]).map(|d| d.saturating_mul(512_000));
+        rep.wear_used_pct = rep.nvme_percent_used;
     }
     if let Some(l) = r.get("nvme_self_test_log") {
         if let Some(v) = int(l, &["current_self_test_operation", "value"]) {
@@ -417,6 +476,19 @@ fn parse_scsi(r: &Value, rep: &mut Report) {
         rep.long_minutes = (secs + 59) / 60;
     }
     rep.short_minutes = 2;
+    // Bridged SATA disks report 0 here; treat that as unknown.
+    let gb = |k: &str| {
+        at(r, &["scsi_error_counter_log", k, "gigabytes_processed"])
+            .and_then(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
+            .filter(|g| *g > 0.0)
+            .map(|g| (g * 1e9) as u64)
+    };
+    rep.written_bytes = gb("write");
+    rep.read_bytes = gb("read");
+    rep.wear_used_pct = int(r, &["scsi_percentage_used_endurance_indicator"]);
 
     // Self-test entries are top-level keys scsi_self_test_0..N, newest first.
     let mut idx: Vec<u32> = r

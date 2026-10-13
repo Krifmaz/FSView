@@ -126,3 +126,43 @@ fn standby_and_failed_overall() {
         UNKNOWN
     );
 }
+
+#[test]
+fn lifetime_traffic_and_life() {
+    let hdd = load("smart_ZXA0R1KK_sat.json", "sat");
+    assert_eq!(hdd.written_bytes, Some(481_579_786_942 * 512));
+    assert_eq!(hdd.read_bytes, Some(860_651_841_421 * 512));
+    assert_eq!(hdd.wear_used_pct, None, "hard disks have no wear indicator");
+    let l = lifespan(&hdd, OK);
+    assert!(l.workload_bytes_per_year.unwrap() > 0);
+    assert!(l.basis.contains("5-year"));
+    assert_eq!(l.remaining_written_bytes, None);
+    let failing = lifespan(&hdd, CRIT);
+    assert_eq!(
+        (failing.level.as_str(), failing.remaining_pct),
+        (CRIT, Some(0))
+    );
+    assert_eq!(lifespan(&hdd, WARN).remaining_pct, None);
+
+    let nvme = load("smart_nvme0n1.json", "");
+    assert_eq!(nvme.written_bytes, Some(45_543_999 * 512_000));
+    let l = lifespan(&nvme, OK);
+    assert!(l.basis.contains("flash"), "{l:?}");
+    if let Some(used) = nvme.wear_used_pct.filter(|u| *u >= 1) {
+        assert_eq!(l.remaining_pct, Some(100 - used));
+        assert!(l.remaining_written_bytes.unwrap() > nvme.written_bytes.unwrap());
+    }
+
+    // Bridged SATA disk reports 0 GB processed: unknown, not zero.
+    let scsi = load("smart_sdc_scsi.json", "");
+    assert_eq!(scsi.written_bytes, None);
+
+    let old = Report {
+        power_on_hours: Some(53_238),
+        rotation_rate: 7200,
+        protocol: "ATA".into(),
+        ..Default::default()
+    };
+    let l = lifespan(&old, OK);
+    assert_eq!((l.remaining_pct, l.level.as_str()), (Some(0), WARN));
+}

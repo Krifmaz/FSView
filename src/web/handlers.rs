@@ -427,6 +427,8 @@ struct HealthView {
     standby: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     self_test_running: Option<Running>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    life: Option<smart::Life>,
     updated_at: Option<chrono::DateTime<Utc>>,
     checked_at: Option<chrono::DateTime<Utc>>,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -465,6 +467,7 @@ fn disk_view(app: &App, d: &Disk) -> DiskView {
             model: String::new(),
             standby: e.standby,
             self_test_running: None,
+            life: e.life.clone(),
             updated_at: e.updated_at,
             checked_at: e.checked_at,
             error: e.error.clone(),

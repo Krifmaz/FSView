@@ -3,6 +3,7 @@ import { api } from "../api";
 import { ErrorBox, Loading } from "../components";
 import type { Settings, StatusInfo, Thresholds } from "../types";
 import { useFetch } from "../util";
+import { setSkipConfirm } from "../actions";
 
 const FIELDS: { key: keyof Thresholds; label: string; unit?: string }[] = [
   { key: "temp_warn_c", label: "Temperature warning", unit: "°C" },
@@ -30,6 +31,17 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
   useEffect(() => {
     if (cfg.data) setForm(cfg.data);
   }, [cfg.data]);
+
+  const toggleConfirm = async (skip: boolean) => {
+    if (!form) return;
+    try {
+      const next = await api.put<Settings>("/api/settings", { ...form, skip_confirm: skip });
+      setForm(next);
+      setSkipConfirm(skip);
+    } catch (err: any) {
+      setMsg({ kind: "error", text: err.message });
+    }
+  };
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -105,6 +117,19 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
               </dd>
             </dl>
           )}
+        </div>
+
+        <div className="card stack">
+          <h3 style={{ margin: 0 }}>Confirmations</h3>
+          <label className="check" style={{ alignItems: "flex-start" }}>
+            <input type="checkbox" checked={!form?.skip_confirm} disabled={!form} onChange={(e) => toggleConfirm(!e.target.checked)} />
+            <span>
+              Ask before mount, unmount, rename, self-tests and other non-destructive actions
+              <div className="small dim">
+                When off, they run right away (still recorded in the audit log). Format, wipe and repair always ask you to type the disk name; fstab and pool edits always show the diff.
+              </div>
+            </span>
+          </label>
         </div>
 
         <div className="card stack">

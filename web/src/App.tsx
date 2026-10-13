@@ -19,8 +19,9 @@ import {
 } from "lucide-react";
 import { api, setUnauthorizedHandler } from "./api";
 import { useTheme, type ThemeChoice } from "./theme";
+import { setSkipConfirm } from "./actions";
 import { useHashRoute } from "./util";
-import type { StatusInfo } from "./types";
+import type { Settings, StatusInfo } from "./types";
 import Login from "./pages/Login";
 import OverviewPage from "./pages/Overview";
 import DiskPage from "./pages/Disk";
@@ -89,6 +90,10 @@ export default function App() {
         .then(setStatus)
         .catch(() => {});
     load();
+    api
+      .get<Settings>("/api/settings")
+      .then((s) => setSkipConfirm(!!s.skip_confirm))
+      .catch(() => {});
     const t = setInterval(() => !document.hidden && load(), 30000);
     return () => clearInterval(t);
   }, [user]);

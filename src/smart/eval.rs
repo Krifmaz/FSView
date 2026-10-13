@@ -259,3 +259,99 @@ pub fn evaluate(r: &Report, t: &Thresholds) -> Assessment {
     }
     a
 }
+
+/// Typical design life of a hard disk (≈ 5 years powered on). Real disks
+/// vary widely; this only frames age, it is not a prediction.
+pub const HDD_DESIGN_HOURS: i64 = 43_800;
+
+/// Age, traffic and an estimate of the life left.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Life {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub age_hours: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub written_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_bytes: Option<u64>,
+    /// Average reads + writes per year of power-on time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workload_bytes_per_year: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wear_used_pct: Option<i64>,
+    /// Rough share of life left, 0-100.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_pct: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_hours: Option<i64>,
+    /// Flash only: writes left at the current wear rate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_written_bytes: Option<u64>,
+    /// How the estimate was made.
+    pub basis: String,
+    /// ok | warn | crit
+    pub level: String,
+    pub verdict: String,
+}
+
+/// Estimates remaining life from the wear indicator (flash) or age against
+/// a typical service life (hard disks), overridden by health findings.
+pub fn lifespan(r: &Report, status: &str) -> Life {
+    let age = r.power_on_hours.filter(|h| *h >= 0);
+    let mut l = Life {
+        age_hours: age,
+        written_bytes: r.written_bytes,
+        read_bytes: r.read_bytes,
+        wear_used_pct: r.wear_used_pct,
+        ..Default::default()
+    };
+    if let (Some(h), true) = (age, r.written_bytes.is_some() || r.read_bytes.is_some()) {
+        if h >= 24 * 30 {
+            let total = r.written_bytes.unwrap_or(0) as f64 + r.read_bytes.unwrap_or(0) as f64;
+            l.workload_bytes_per_year = Some((total / (h as f64 / 8766.0)) as u64);
+        }
+    }
+    let flash = r.protocol == "NVMe" || r.rotation_rate == 0 && r.wear_used_pct.is_some();
+    if let (true, Some(used)) = (flash, r.wear_used_pct) {
+        let left = (100 - used).max(0);
+        l.remaining_pct = Some(left);
+        l.basis = format!("flash wear indicator: {used}% of rated endurance used");
+        if used >= 1 {
+            let f = left as f64 / used as f64;
+            l.remaining_hours = age.map(|h| (h as f64 * f) as i64);
+            l.remaining_written_bytes = r.written_bytes.map(|w| (w as f64 * f) as u64);
+        }
+    } else if let Some(h) = age {
+        let left = (HDD_DESIGN_HOURS - h).max(0);
+        l.remaining_pct = Some(left * 100 / HDD_DESIGN_HOURS);
+        l.remaining_hours = Some(left);
+        l.basis =
+            "age against a typical 5-year hard disk service life; real lifespans vary a lot".into();
+    } else {
+        l.basis = "the drive does not report its age".into();
+    }
+    let (level, verdict) = match status {
+        CRIT => (CRIT, "Failing: copy the data off and replace it"),
+        WARN => (WARN, "Degrading: back up and plan a replacement"),
+        _ if l.remaining_pct == Some(0) && flash => (CRIT, "Rated endurance used up: replace soon"),
+        _ if l.remaining_pct == Some(0) => (
+            WARN,
+            "Past typical service life: healthy for now, keep backups",
+        ),
+        _ if l.remaining_pct.is_some_and(|p| p < 20) => {
+            (WARN, "Getting old: healthy for now, keep backups")
+        }
+        _ => (OK, "Healthy"),
+    };
+    // Errors make an age-based figure meaningless; flash wear still counts.
+    if status == CRIT {
+        l.remaining_pct = Some(0);
+        l.remaining_hours = Some(0);
+        l.remaining_written_bytes = None;
+    } else if status == WARN && !flash {
+        l.remaining_pct = None;
+        l.remaining_hours = None;
+    }
+    l.level = level.into();
+    l.verdict = verdict.into();
+    l
+}

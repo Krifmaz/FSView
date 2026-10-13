@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { api, ApiError } from "../api";
-import { ConfirmDialog, ErrorBox, Loading, ProtectedBadge, StatusBadge, Temp, UsageBar, type ConfirmSpec } from "../components";
+import { api } from "../api";
+import { ErrorBox, Loading, ProtectedBadge, StatusBadge, Temp, UsageBar } from "../components";
+import { useSelfTest } from "../selftest";
 import type { DiskDetail, Node, SmartReport } from "../types";
 import { fmtBytes, fmtHours, fmtTime, slotLabel, timeAgo, useFetch } from "../util";
 import DiskActions from "./DiskActions";
+import { LifeCard } from "../life";
 
 function Tree({ nodes }: { nodes?: Node[] }) {
   if (!nodes?.length) return null;
@@ -86,9 +88,8 @@ function SmartMetrics({ r }: { r: SmartReport }) {
 
 export default function DiskPage({ name }: { name: string }) {
   const { data, error, loading, reload, setData } = useFetch(() => api.get<DiskDetail>(`/api/disks/${encodeURIComponent(name)}`), [name]);
-  const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
-  const [pendingTest, setPendingTest] = useState<string>("");
-  const [busy, setBusy] = useState(false);
+  const st = useSelfTest(() => reload());
+  const busy = st.busy;
   const [msg, setMsg] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   const [raw, setRaw] = useState<unknown>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -111,46 +112,7 @@ export default function DiskPage({ name }: { name: string }) {
     }
   };
 
-  const startTest = async (test: string) => {
-    setMsg(null);
-    setBusy(true);
-    try {
-      // Dry run first so the dialog shows the exact command.
-      const dry = await api.post<{ plan: string[] }>(`/api/disks/${d.name}/selftest`, { test, dry_run: true });
-      const minutes = test === "short" ? r?.short_test_minutes : r?.long_test_minutes;
-      setPendingTest(test);
-      setConfirm({
-        title: test === "abort" ? "Abort self-test" : `Run ${test} SMART self-test`,
-        disk: d,
-        operation:
-          test === "abort"
-            ? "Abort the running self-test."
-            : `Start a ${test} self-test. The disk stays usable; the test runs in the drive's firmware${minutes ? ` (about ${minutes} min)` : ""}.`,
-        plan: dry.plan,
-        confirmLabel: test === "abort" ? "Abort test" : "Start test",
-      });
-    } catch (e: any) {
-      const ae = e as ApiError;
-      setMsg({ kind: "error", text: ae.code === "writes_disabled" ? "Write operations are disabled in /etc/fsview/helper.conf (writes_enabled = false)." : ae.message });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const runConfirmed = async () => {
-    setBusy(true);
-    try {
-      await api.post(`/api/disks/${d.name}/selftest`, { test: pendingTest, confirmed: true });
-      setMsg({ kind: "info", text: pendingTest === "abort" ? "Self-test aborted." : `${pendingTest} self-test started. Status refreshes automatically.` });
-      setConfirm(null);
-      setTimeout(reload, 6000);
-    } catch (e: any) {
-      setMsg({ kind: "error", text: e.message });
-      setConfirm(null);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const startTest = (test: "short" | "long" | "abort") => st.start([d], test, test === "short" ? r?.short_test_minutes : test === "long" ? r?.long_test_minutes : undefined);
 
   const loadRaw = async () => {
     const res = await api.get<DiskDetail>(`/api/disks/${d.name}?raw=1`);
@@ -172,6 +134,7 @@ export default function DiskPage({ name }: { name: string }) {
         </div>
       </div>
       {msg && <div className={`alert ${msg.kind}`}>{msg.text}</div>}
+      {st.message}
       {d.protected && (
         <div className="alert info">
           <b>Protected system disk.</b> Destructive operations are blocked by the helper: {(d.protected_reasons ?? []).join("; ")}
@@ -317,6 +280,7 @@ export default function DiskPage({ name }: { name: string }) {
             {r.passed === undefined ? "n/a" : r.passed ? <span style={{ color: "var(--ok)" }}>PASSED</span> : <b style={{ color: "var(--crit)" }}>FAILED</b>}
           </div>
           <SmartMetrics r={r} />
+          <LifeCard life={sm?.life} rotational={d.rotational} />
 
           <div className="card" style={{ marginBottom: 12 }}>
             <div className="between">
@@ -426,7 +390,7 @@ export default function DiskPage({ name }: { name: string }) {
         </>
       )}
 
-      {confirm && <ConfirmDialog spec={confirm} busy={busy} onCancel={() => setConfirm(null)} onConfirm={runConfirmed} />}
+      {st.dialog}
     </>
   );
 }

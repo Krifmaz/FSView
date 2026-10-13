@@ -5,6 +5,7 @@ import { explainError, useAction } from "../actions";
 import { ErrorBox, Loading, UsageBar } from "../components";
 import type { FsEntry, FstabDevice, FstabDoc, FstabState, StorageEntry, StorageView, WriteResult } from "../types";
 import { fmtBytes, useFetch } from "../util";
+import { HealthBadge, useHealthMap } from "../life";
 
 const MOUNTABLE = ["ext2", "ext3", "ext4", "xfs", "btrfs", "vfat", "exfat", "ntfs", "ntfs3"];
 const MP_RE = /^\/(mnt|media|srv|data|storage|pool|tank)(\/[A-Za-z0-9._@+-]+)+$/;
@@ -91,11 +92,17 @@ function RenameDialog({ e, onClose, onStart }: { e: StorageEntry; onClose: () =>
   );
 }
 
-function AddMountDialog({ devices, onClose, onStart }: { devices: FstabDevice[]; onClose: () => void; onStart: (d: FstabDevice, mp: string, mountNow: boolean) => void }) {
+const LABEL_FS = ["ext2", "ext3", "ext4", "xfs", "btrfs", "vfat", "exfat"];
+
+function AddMountDialog({ devices, onClose, onStart }: { devices: FstabDevice[]; onClose: () => void; onStart: (d: FstabDevice, mp: string, mountNow: boolean, label: string | null) => void }) {
   const [sel, setSel] = useState(devices[0]?.path ?? "");
   const d = devices.find((x) => x.path === sel);
   const [mp, setMp] = useState(d ? `/mnt/${d.label || d.name}` : "/mnt/data");
   const [now, setNow] = useState(true);
+  const [match, setMatch] = useState(true);
+  const folder = mp.split("/").filter(Boolean).pop() ?? "";
+  const canLabel = !!d && LABEL_FS.includes(d.fstype) && /^[A-Za-z0-9][A-Za-z0-9._-]{0,15}$/.test(folder) && !(d.fstype === "xfs" && folder.length > 12) && !(d.fstype === "vfat" && folder.length > 11);
+  const relabel = canLabel && match && folder !== (d?.label ?? "");
   return (
     <div className="modal-bg" role="dialog" aria-modal="true" onClick={onClose}>
       <div className="modal" onClick={(x) => x.stopPropagation()}>
@@ -133,6 +140,16 @@ function AddMountDialog({ devices, onClose, onStart }: { devices: FstabDevice[];
               <input className="mono" value={mp} onChange={(x) => setMp(x.target.value.trim())} />
             </label>
             {!MP_RE.test(mp) && <div className="small" style={{ color: "var(--warn)" }}>Use a folder under /mnt, /media, /srv, /data, /storage, /pool or /tank.</div>}
+            {d && LABEL_FS.includes(d.fstype) && (
+              <label className="check" style={{ alignItems: "flex-start" }}>
+                <input type="checkbox" checked={match} disabled={!canLabel} onChange={(x) => setMatch(x.target.checked)} />
+                <span>
+                  Rename the disk to <b className="mono">{folder || "…"}</b> so its label matches the folder
+                  {!canLabel && <div className="small dim">Folder name can't be used as a label (letters, digits, . _ - only, up to 16 characters).</div>}
+                  {canLabel && folder === (d.label ?? "") && <div className="small dim">Already matches.</div>}
+                </span>
+              </label>
+            )}
             <label className="check">
               <input type="checkbox" checked={now} onChange={(x) => setNow(x.target.checked)} />
               Mount it now
@@ -145,7 +162,7 @@ function AddMountDialog({ devices, onClose, onStart }: { devices: FstabDevice[];
               <button className="btn ghost" onClick={onClose}>
                 Cancel
               </button>
-              <button className="btn primary" disabled={!d || !MP_RE.test(mp)} onClick={() => d && onStart(d, mp, now)}>
+              <button className="btn primary" disabled={!d || !MP_RE.test(mp)} onClick={() => d && onStart(d, mp, now, relabel ? folder : null)}>
                 Continue
               </button>
             </div>
@@ -159,6 +176,7 @@ function AddMountDialog({ devices, onClose, onStart }: { devices: FstabDevice[];
 export default function MountsPage() {
   const { data, error, loading, reload } = useFetch(() => api.get<StorageView>("/api/storage"), [], 30000);
   const act = useAction(reload);
+  const health = useHealthMap();
   const [rename, setRename] = useState<StorageEntry | null>(null);
   const [adding, setAdding] = useState(false);
   if (loading && !data) return <Loading />;
@@ -238,7 +256,7 @@ export default function MountsPage() {
     }
   };
 
-  const startAdd = async (d: FstabDevice, mp: string, now: boolean) => {
+  const startAdd = async (d: FstabDevice, mp: string, now: boolean, label: string | null) => {
     setAdding(false);
     try {
       const st = await api.get<FstabState>("/api/fstab");
@@ -256,16 +274,25 @@ export default function MountsPage() {
         url: "/api/fstab/apply",
         body: { doc, base_sha256: st.sha256 },
         title: `Mount ${d.name} at ${mp}`,
-        operation: `Add ${d.name} (${d.fstype}${d.label ? `, ${d.label}` : ""}) to /etc/fstab at ${mp}${now ? " and mount it" : ""}. A backup of fstab is made first.`,
+        operation: `Add ${d.name} (${d.fstype}${d.label ? `, ${d.label}` : ""}) to /etc/fstab at ${mp}${label ? `, rename it to "${label}"` : ""}${now ? " and mount it" : ""}. A backup of fstab is made first.`,
         confirmLabel: now ? "Add and mount" : "Add to fstab",
-        morePlan: now ? [`mount ${mp}`] : [],
+        morePlan: [...(label ? [`relabel ${d.name} as ${label}`] : []), ...(now ? [`mount ${mp}`] : [])],
         done: () => `${d.name} added to fstab at ${mp}.`,
-        then: now
-          ? async () => {
-              await api.post<WriteResult>("/api/mounts/mount", { target: mp, confirmed: true });
-              return "Mounted.";
-            }
-          : undefined,
+        then:
+          now || label
+            ? async () => {
+                const notes: string[] = [];
+                if (label) {
+                  await api.post<WriteResult>(`/api/disks/${d.disk}/label`, { device: d.name, label, confirmed: true });
+                  notes.push(`Renamed to ${label}.`);
+                }
+                if (now) {
+                  await api.post<WriteResult>("/api/mounts/mount", { target: mp, confirmed: true });
+                  notes.push("Mounted.");
+                }
+                return notes.join(" ");
+              }
+            : undefined,
       });
     } catch (x) {
       act.setMsg({ kind: "error", text: explainError(x) });
@@ -311,11 +338,14 @@ export default function MountsPage() {
   );
   const device = (e: StorageEntry) =>
     e.device ? (
-      <a href={`#/disk/${e.device.disk}`}>
-        <span className="mono">{e.device.name}</span>
-        {e.device.label && <b> {e.device.label}</b>}
-        <span className="dim"> · {fmtBytes(e.device.size_bytes)}</span>
-      </a>
+      <span className="row" style={{ gap: 6 }}>
+        <a href={`#/disk/${e.device.disk}`}>
+          <span className="mono">{e.device.name}</span>
+          {e.device.label && <b> {e.device.label}</b>}
+          <span className="dim"> · {fmtBytes(e.device.size_bytes)}</span>
+        </a>
+        <HealthBadge disk={e.device.disk} health={health.get(e.device.disk)} />
+      </span>
     ) : e.pool ? (
       <a href="#/pools">mergerfs pool</a>
     ) : (

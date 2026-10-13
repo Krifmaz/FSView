@@ -542,21 +542,21 @@ fn name_re() -> &'static Regex {
     R.get_or_init(|| Regex::new(r"^[a-z0-9]{2,16}$").unwrap())
 }
 
-async fn find_disk(app: &App, name: &str) -> Result<Disk, Response> {
+async fn find_disk(app: &App, name: &str) -> Result<Disk, Box<Response>> {
     if !name_re().is_match(name) {
-        return Err(err(
+        return Err(Box::new(err(
             StatusCode::BAD_REQUEST,
             "bad_request",
             "invalid disk name",
-        ));
+        )));
     }
     let inv = app
         .inventory(false)
         .await
-        .map_err(|e| err(StatusCode::BAD_GATEWAY, "helper_unavailable", e))?;
+        .map_err(|e| Box::new(err(StatusCode::BAD_GATEWAY, "helper_unavailable", e)))?;
     inv.find_disk(name)
         .cloned()
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "not_found", "no such disk"))
+        .ok_or_else(|| Box::new(err(StatusCode::NOT_FOUND, "not_found", "no such disk")))
 }
 
 async fn disk(
@@ -567,7 +567,7 @@ async fn disk(
 ) -> Response {
     let d = match find_disk(&app, &name).await {
         Ok(d) => d,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let e = match app.smart_for(&d.name) {
         Some(e) => e,
@@ -588,7 +588,7 @@ async fn smart_refresh(
 ) -> Response {
     let d = match find_disk(&app, &name).await {
         Ok(d) => d,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let e = app.refresh_smart(&d.name, q.wake == "1").await;
     ok(json!({"disk": disk_view(&app, &d), "smart": e}))
@@ -612,7 +612,7 @@ async fn selftest(
 ) -> Response {
     let d = match find_disk(&app, &name).await {
         Ok(d) => d,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let req = Request {
         op: OP_SMART_SELFTEST.into(),

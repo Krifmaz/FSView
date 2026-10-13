@@ -14,6 +14,7 @@ const (
 	OpJournalKernel = "journal.kernel"
 	OpBootCollect   = "boot.collect"
 	OpAuditList     = "audit.list"
+	OpHiddenScan    = "hidden.scan"
 )
 
 // MaxMessage bounds request and response sizes on the socket.
@@ -94,4 +95,26 @@ type StatusResult struct {
 	WritesEnabled bool            `json:"writes_enabled"`
 	BootID        string          `json:"boot_id"`
 	Tools         map[string]bool `json:"tools"`
+}
+
+type HiddenScanParams struct {
+	// All scans every real filesystem; otherwise only the root filesystem.
+	All bool `json:"all,omitempty"`
+}
+
+type HiddenSample struct {
+	Name  string `json:"name"`
+	Bytes int64  `json:"bytes"`
+}
+
+// HiddenResult describes files hidden underneath a mountpoint.
+type HiddenResult struct {
+	Mountpoint   string         `json:"mountpoint"`
+	Parent       string         `json:"parent"`
+	ParentSource string         `json:"parent_source"`
+	Files        int            `json:"files"`
+	Bytes        int64          `json:"bytes"`
+	Truncated    bool           `json:"truncated,omitempty"`
+	Samples      []HiddenSample `json:"samples,omitempty"`
+	Error        string         `json:"error,omitempty"`
 }

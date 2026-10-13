@@ -144,6 +144,7 @@ func cmdHelper(args []string) error {
 	srv := helper.New(helper.Config{
 		Socket: cfg.Socket, AllowedUIDs: []int{uid}, SocketGID: gid,
 		WritesEnabled: cfg.WritesEnabled, IncludeLoop: cfg.IncludeLoop, Version: version,
+		ScratchDir: filepath.Dir(cfg.Socket),
 	}, runner.Exec{}, audit)
 	l, err := srv.Listen()
 	if err != nil {

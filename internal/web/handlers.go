@@ -82,6 +82,8 @@ func (s *Server) Handler() http.Handler {
 	api.Handle("GET /api/events/stream", s.authed(s.handleEventStream))
 	api.Handle("GET /api/bootcheck", s.authed(s.handleBootCheck))
 	api.Handle("GET /api/audit", s.authed(s.handleAudit))
+	api.Handle("GET /api/hidden", s.authed(s.handleHidden))
+	api.Handle("POST /api/hidden/scan", s.authed(s.handleHiddenScan))
 	api.Handle("GET /api/settings", s.authed(s.handleGetSettings))
 	api.Handle("PUT /api/settings", s.authed(s.handlePutSettings))
 	api.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
@@ -386,6 +388,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"warnings":     inv.Warnings,
 		"summary":      sum,
 		"events_24h":   s.events.Counts(time.Now().Add(-24 * time.Hour)),
+		"hidden":       s.hiddenSnapshot(),
 	})
 }
 
@@ -531,6 +534,15 @@ func (s *Server) handleBootCheck(w http.ResponseWriter, r *http.Request) {
 	rep := bootcheck.Analyze(&data, inv)
 	s.bootRep, s.bootTime = rep, time.Now()
 	writeJSON(w, http.StatusOK, rep)
+}
+
+func (s *Server) handleHidden(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.hiddenSnapshot())
+}
+
+func (s *Server) handleHiddenScan(w http.ResponseWriter, r *http.Request) {
+	s.scanHidden(r.Context(), r.URL.Query().Get("all") == "1")
+	writeJSON(w, http.StatusOK, s.hiddenSnapshot())
 }
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {

@@ -152,6 +152,7 @@ export interface Overview {
   warnings?: string[] | null;
   summary: Record<string, number>;
   events_24h: Record<string, number>;
+  hidden?: HiddenView;
 }
 
 export interface Attribute {
@@ -322,4 +323,22 @@ export interface StatusInfo {
   tls: boolean;
   helper?: { version: string; hostname: string; writes_enabled: boolean; boot_id: string; tools: Record<string, boolean> };
   helper_error?: string;
+}
+
+export interface HiddenResult {
+  mountpoint: string;
+  parent: string;
+  parent_source: string;
+  files: number;
+  bytes: number;
+  truncated?: boolean;
+  samples?: { name: string; bytes: number }[];
+  error?: string;
+}
+
+export interface HiddenView {
+  results: HiddenResult[];
+  all: boolean;
+  checked_at: string;
+  error?: string;
 }

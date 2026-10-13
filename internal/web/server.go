@@ -57,6 +57,12 @@ type Server struct {
 	bootTime time.Time
 
 	smartKick chan string
+
+	hiddenMu   sync.Mutex
+	hidden     []proto.HiddenResult
+	hiddenAll  bool
+	hiddenTime time.Time
+	hiddenErr  string
 }
 
 type smartEntry struct {
@@ -144,6 +150,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	go s.journalLoop(ctx)
 	go s.smartLoop(ctx)
+	go s.hiddenLoop(ctx)
 
 	errc := make(chan error, len(s.opt.Listen))
 	var servers []*http.Server
@@ -333,4 +340,59 @@ func (s *Server) inventory(ctx context.Context, fresh bool) (*inventory.Inventor
 	}
 	s.inv, s.invTime = &inv, time.Now()
 	return s.inv, nil
+}
+
+// hiddenLoop checks the root filesystem for data hidden under mountpoints
+// shortly after start and then every 6 hours. Full scans (all
+// filesystems, which may wake sleeping disks) only run on request.
+func (s *Server) hiddenLoop(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(30 * time.Second):
+	}
+	t := time.NewTicker(6 * time.Hour)
+	defer t.Stop()
+	for {
+		s.scanHidden(ctx, false)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+func (s *Server) scanHidden(ctx context.Context, all bool) {
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	var res []proto.HiddenResult
+	_, err := s.helper.Call(cctx, &proto.Request{Op: proto.OpHiddenScan, Params: mustJSON(proto.HiddenScanParams{All: all})}, &res)
+	s.hiddenMu.Lock()
+	defer s.hiddenMu.Unlock()
+	if err != nil {
+		s.hiddenErr = err.Error()
+		return
+	}
+	if res == nil {
+		res = []proto.HiddenResult{}
+	}
+	s.hidden, s.hiddenAll, s.hiddenTime, s.hiddenErr = res, all, time.Now().UTC(), ""
+}
+
+type hiddenView struct {
+	Results   []proto.HiddenResult `json:"results"`
+	All       bool                 `json:"all"`
+	CheckedAt time.Time            `json:"checked_at"`
+	Error     string               `json:"error,omitempty"`
+}
+
+func (s *Server) hiddenSnapshot() hiddenView {
+	s.hiddenMu.Lock()
+	defer s.hiddenMu.Unlock()
+	r := s.hidden
+	if r == nil {
+		r = []proto.HiddenResult{}
+	}
+	return hiddenView{Results: r, All: s.hiddenAll, CheckedAt: s.hiddenTime, Error: s.hiddenErr}
 }

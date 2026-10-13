@@ -267,3 +267,21 @@ func TestSelfTestReverifiesPassThrough(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanHiddenScan(t *testing.T) {
+	jobs, err := planHiddenScan(td(t, "findmnt.json"), true)
+	if err != nil || len(jobs) != 1 || jobs[0].parent.Target != "/" {
+		t.Fatalf("%+v %v", jobs, err)
+	}
+	got := strings.Join(jobs[0].children, ",")
+	for _, want := range []string{"/boot/efi", "/mnt/cache", "/etc/pve", "/sys", "/tmp"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
+		}
+	}
+	// vfat /boot/efi has no children, so all-mode still yields only "/".
+	all, _ := planHiddenScan(td(t, "findmnt.json"), false)
+	if len(all) != 1 {
+		t.Fatalf("all: %+v", all)
+	}
+}

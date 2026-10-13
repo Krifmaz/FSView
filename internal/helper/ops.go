@@ -48,6 +48,7 @@ var registry = map[string]opDef{
 	proto.OpJournalKernel: {class: Read, read: opJournal},
 	proto.OpBootCollect:   {class: Read, read: opBootCollect},
 	proto.OpAuditList:     {class: Read, read: opAuditList},
+	proto.OpHiddenScan:    {class: Read, read: opHiddenScan},
 	proto.OpSmartSelfTest: {class: Write, prepare: prepSmartSelfTest},
 }
 

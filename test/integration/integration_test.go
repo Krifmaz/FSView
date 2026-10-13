@@ -281,3 +281,40 @@ func TestBootCheckWithLoopFstab(t *testing.T) {
 		t.Errorf("missing-device entry: %+v", e)
 	}
 }
+
+// Reproduces the spiritlab incident: files written into a mountpoint
+// directory while the disk was not mounted are hidden once it mounts.
+func TestHiddenDataUnderMountpoint(t *testing.T) {
+	parent := newLoop(t, "fsvparent")
+	child := newLoop(t, "fsvchild")
+	pmp := mount(t, parent.dev)
+	stray := filepath.Join(pmp, "pool", "downloads")
+	if err := os.MkdirAll(stray, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stray, "movie.mkv"), make([]byte, 3<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, "mount", child.dev, filepath.Join(pmp, "pool"))
+	t.Cleanup(func() { exec.Command("umount", "-l", filepath.Join(pmp, "pool")).Run() })
+	before := run(t, "findmnt", "-rn", "-o", "TARGET")
+
+	sock, _ := startHelper(t, helper.Config{AllowedUIDs: []int{0}, SocketGID: -1, Version: "it"})
+	var res []proto.HiddenResult
+	if _, err := (&helperclient.Client{Socket: sock}).Call(context.Background(),
+		&proto.Request{Op: proto.OpHiddenScan, Params: helperclient.Params(proto.HiddenScanParams{All: true})}, &res); err != nil {
+		t.Fatal(err)
+	}
+	var hit *proto.HiddenResult
+	for i := range res {
+		if res[i].Mountpoint == filepath.Join(pmp, "pool") {
+			hit = &res[i]
+		}
+	}
+	if hit == nil || hit.Files != 1 || hit.Bytes != 3<<20 || hit.Samples[0].Name != "downloads" {
+		t.Fatalf("hidden data not found: %+v", res)
+	}
+	if after := run(t, "findmnt", "-rn", "-o", "TARGET"); after != before {
+		t.Fatalf("scan leaked mounts into the host namespace:\n%s", after)
+	}
+}

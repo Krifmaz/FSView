@@ -33,6 +33,7 @@ type Config struct {
 	IncludeLoop   bool
 	FstabPath     string
 	SysRoot       string // default /sys
+	ScratchDir    string // temporary mountpoints (default os.TempDir)
 	Version       string
 }
 

@@ -61,6 +61,9 @@ func (f *fakeHelper) Call(ctx context.Context, req *proto.Request, out any) (*pr
 		result = map[string]string{"summary": "x"}
 	case proto.OpJournalKernel:
 		result = events.ParseJSONLines([]byte(`{"__CURSOR":"c1","__REALTIME_TIMESTAMP":"1791851200000000","__MONOTONIC_TIMESTAMP":"1270000000","PRIORITY":"3","MESSAGE":"I/O error, dev sdc, sector 1"}`))
+	case proto.OpHiddenScan:
+		result = []proto.HiddenResult{{Mountpoint: "/mnt/drivepool", Parent: "/", ParentSource: "/dev/mapper/pve-root", Files: 22, Bytes: 78000430137,
+			Samples: []proto.HiddenSample{{Name: "downloads", Bytes: 78000430137}}}}
 	case proto.OpStatus:
 		result = proto.StatusResult{Version: "t", WritesEnabled: f.writes}
 	default:
@@ -245,5 +248,21 @@ func TestJournalPollAndEvents(t *testing.T) {
 	es := NewEventStore(s.store.Dir(), 100)
 	if len(es.List(EventFilter{})) != 1 {
 		t.Fatal("events not persisted")
+	}
+}
+
+func TestHiddenScan(t *testing.T) {
+	_, h, fh := newTest(t, false)
+	tok := login(t, h)
+	if w := do(h, "POST", "/api/hidden/scan?all=1", "", tok, true, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"files":22`) || !strings.Contains(w.Body.String(), `"all":true`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var p proto.HiddenScanParams
+	json.Unmarshal(fh.reqs[len(fh.reqs)-1].Params, &p)
+	if !p.All {
+		t.Fatal("all flag not passed to helper")
+	}
+	if w := do(h, "GET", "/api/overview", "", tok, false, ""); !strings.Contains(w.Body.String(), "/mnt/drivepool") {
+		t.Fatal("overview missing hidden data")
 	}
 }

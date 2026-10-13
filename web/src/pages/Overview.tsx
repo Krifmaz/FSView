@@ -121,6 +121,16 @@ export default function OverviewPage() {
                 </div>
               )),
           )}
+          {(data.hidden?.results ?? [])
+            .filter((h) => h.files > 0)
+            .map((h) => (
+              <div key={h.mountpoint} className="alert error">
+                <a href="#/boot">
+                  <b>Hidden data:</b> {fmtBytes(h.bytes)} in {h.files.toLocaleString()} files
+                </a>{" "}
+                is stored on {h.parent} underneath the <span className="mono">{h.mountpoint}</span> mount. It uses space but can't be seen while the mount is active.
+              </div>
+            ))}
           {boot.data && boot.data.summary.failed > 0 && (
             <div className="alert error">
               <a href="#/boot">

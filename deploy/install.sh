@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # FSView installer for Proxmox VE 9 / Debian 13.
 #
-#   curl -fsSL https://raw.githubusercontent.com/krifmaz/fsview/main/deploy/install.sh | bash
+#   curl -fsSL https://github.com/Krifmaz/FSView/releases/latest/download/install.sh | bash
 #   ./install.sh                       # from an extracted release tarball
 #   ./install.sh --version v0.1.0      # a specific release
 #   ./install.sh --binary ./fsview     # a locally built binary (development)
@@ -9,7 +9,7 @@
 # Safe to re-run: upgrades the binary and units, keeps config, data and users.
 set -euo pipefail
 
-REPO="${FSVIEW_REPO:-krifmaz/fsview}"
+REPO="${FSVIEW_REPO:-Krifmaz/FSView}"
 VERSION=""
 BINARY=""
 BIN_DIR=/usr/local/bin

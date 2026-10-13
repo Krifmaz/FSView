@@ -163,6 +163,10 @@ func (h *demoHelper) Call(ctx context.Context, req *proto.Request, out any) (*pr
 			},
 			Mounts: mounts,
 		}
+	case proto.OpHiddenScan:
+		result = []proto.HiddenResult{{Mountpoint: "/mnt/drivepool", Parent: "/", ParentSource: "/dev/mapper/pve-root", Files: 22, Bytes: 78000430137,
+			Samples: []proto.HiddenSample{{Name: "downloads", Bytes: 78000430137}}}, {Mountpoint: "/mnt/cache", Parent: "/", ParentSource: "/dev/mapper/pve-root", Files: 57, Bytes: 5798205849,
+			Samples: []proto.HiddenSample{{Name: "incomplete", Bytes: 5798205849}}}}
 	case proto.OpAuditList:
 		result = h.audit
 		if h.audit == nil {

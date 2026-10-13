@@ -10,6 +10,8 @@ Self-hosted web app for disks, filesystems and storage pools on Proxmox VE 9 / D
 - **Health**: `smartctl -j` for ATA, SCSI and NVMe. SATA disks behind SAS bridges are retried with `-d sat` automatically. Polling uses `-n standby`, so it never wakes sleeping disks. Shows attributes, temperature vs. the drive's trip point, power-on hours, reallocated/pending sectors, the self-test log, and short/long/abort self-tests. Alert thresholds are configurable.
 - **Events**: the kernel log filtered for disk events (I/O and medium errors, resets, link down, disks appearing late after boot, removals, filesystem errors). Streamed live, with persistent history.
 - **Boot check**: for the current boot, every fstab entry is marked ok, failed, late or skipped, using systemd unit timings, systemd timeout messages and kernel disk-attach times. It also flags mergerfs pools whose branches did not mount, and lists disks that appeared after their mount timeout.
+- **Hidden data**: finds files stored underneath active mountpoints, written while a disk was not mounted. They use space (often on the root disk) but are invisible. The root disk is checked every 6 hours, other disks on request. The scan runs read-only in a private mount namespace.
+- **Enclosures**: SES shelves via `sg_ses`, showing power supplies, fans, temperatures, voltages and the fault LED.
 - **Audit log**: every write attempt is recorded by the helper, including dry runs and rejected attempts.
 
 ## Install
@@ -17,7 +19,7 @@ Self-hosted web app for disks, filesystems and storage pools on Proxmox VE 9 / D
 On the Proxmox host, as root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/krifmaz/fsview/main/deploy/install.sh | bash
+curl -fsSL https://github.com/Krifmaz/FSView/releases/latest/download/install.sh | bash
 # or from a release tarball:  tar xzf fsview-vX.Y.Z-linux-amd64.tar.gz && cd fsview-*/ && ./install.sh
 ```
 

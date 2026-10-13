@@ -60,6 +60,12 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/fstab/apply", post(fstab_apply))
         .route("/api/fstab/backups/{name}", get(fstab_backup))
         .route("/api/fstab/rollback", post(fstab_rollback))
+        .route("/api/storage", get(storage))
+        .route("/api/mounts/mount", post(mount))
+        .route("/api/mounts/umount", post(umount))
+        .route("/api/disks/{name}/format", post(format))
+        .route("/api/disks/{name}/check", post(fs_check))
+        .route("/api/disks/{name}/locate", post(locate))
         .fallback(|| async { err(StatusCode::NOT_FOUND, "not_found", "no such endpoint") })
         .layer(middleware::from_fn(csrf));
     Router::new()
@@ -782,6 +788,289 @@ async fn hidden(State(app): AppState, _u: User) -> Response {
 async fn hidden_scan(State(app): AppState, _u: User, Query(q): Query<FreshQ>) -> Response {
     app.scan_hidden(q.all == "1").await;
     ok(app.hidden_snapshot())
+}
+
+// ---- mounts, filesystems, pools ----
+
+/// Common fields of every write request from the UI.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct WriteBody<T> {
+    #[serde(flatten)]
+    p: T,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    confirmed: bool,
+    #[serde(default)]
+    confirm_text: String,
+}
+
+async fn helper_write<T: Serialize>(
+    app: &App,
+    (u, ip): (String, IpAddr),
+    op: &str,
+    b: WriteBody<T>,
+) -> Response {
+    let req = Request {
+        op: op.into(),
+        actor: u,
+        client_ip: ip.to_string(),
+        dry_run: b.dry_run,
+        confirmed: b.confirmed,
+        confirm_text: b.confirm_text,
+        params: params(&b.p),
+    };
+    match app.helper.call(req).await {
+        Ok(resp) => {
+            if !resp.dry_run {
+                app.invalidate_caches().await;
+            }
+            ok(
+                json!({"ok": true, "dry_run": resp.dry_run, "plan": resp.plan, "result": resp.result}),
+            )
+        }
+        Err(e) => helper_err(e),
+    }
+}
+
+async fn mount(
+    State(app): AppState,
+    User(u, ip): User,
+    JsonBody(b): JsonBody<WriteBody<MountParams>>,
+) -> Response {
+    helper_write(&app, (u, ip), OP_MOUNT, b).await
+}
+
+async fn umount(
+    State(app): AppState,
+    User(u, ip): User,
+    JsonBody(b): JsonBody<WriteBody<MountParams>>,
+) -> Response {
+    helper_write(&app, (u, ip), OP_UMOUNT, b).await
+}
+
+/// The device must be the disk in the URL or one of its partitions.
+async fn device_of(app: &App, disk: &str, device: &str) -> Result<(), Box<Response>> {
+    let d = find_disk(app, disk).await?;
+    let mut ok = d.name == device;
+    d.walk(&mut |n| ok |= n.name == device);
+    if ok {
+        Ok(())
+    } else {
+        Err(Box::new(err(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            format!("{device} is not on {disk}"),
+        )))
+    }
+}
+
+async fn format(
+    State(app): AppState,
+    User(u, ip): User,
+    Path(name): Path<String>,
+    JsonBody(b): JsonBody<WriteBody<FormatParams>>,
+) -> Response {
+    if let Err(r) = device_of(&app, &name, &b.p.device).await {
+        return *r;
+    }
+    helper_write(&app, (u, ip), OP_FS_FORMAT, b).await
+}
+
+#[derive(Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+struct CheckBody {
+    device: String,
+    #[serde(default)]
+    repair: bool,
+}
+
+async fn fs_check(
+    State(app): AppState,
+    User(u, ip): User,
+    Path(name): Path<String>,
+    JsonBody(b): JsonBody<WriteBody<CheckBody>>,
+) -> Response {
+    if let Err(r) = device_of(&app, &name, &b.p.device).await {
+        return *r;
+    }
+    let op = if b.p.repair {
+        OP_FS_REPAIR
+    } else {
+        OP_FS_CHECK
+    };
+    let b = WriteBody {
+        p: FsCheckParams { device: b.p.device },
+        dry_run: b.dry_run,
+        confirmed: b.confirmed,
+        confirm_text: b.confirm_text,
+    };
+    helper_write(&app, (u, ip), op, b).await
+}
+
+#[derive(Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+struct LocateBody {
+    on: bool,
+}
+
+async fn locate(
+    State(app): AppState,
+    User(u, ip): User,
+    Path(name): Path<String>,
+    JsonBody(b): JsonBody<WriteBody<LocateBody>>,
+) -> Response {
+    let b = WriteBody {
+        p: LocateParams {
+            device: name,
+            on: b.p.on,
+        },
+        dry_run: b.dry_run,
+        confirmed: b.confirmed,
+        confirm_text: String::new(),
+    };
+    helper_write(&app, (u, ip), OP_LOCATE, b).await
+}
+
+/// fstab entries joined with live mounts, plus mergerfs pools with the
+/// state of each branch.
+async fn storage(State(app): AppState, _u: User) -> Response {
+    let fs = call_as::<FstabState>(
+        &*app.helper,
+        Request {
+            op: OP_FSTAB_READ.into(),
+            ..Default::default()
+        },
+    );
+    let ms = call_as::<Vec<MountInfo>>(
+        &*app.helper,
+        Request {
+            op: OP_MOUNTS_LIST.into(),
+            ..Default::default()
+        },
+    );
+    let st = call_as::<StatusResult>(
+        &*app.helper,
+        Request {
+            op: OP_STATUS.into(),
+            ..Default::default()
+        },
+    );
+    let (fs, ms, st) = tokio::join!(fs, ms, st);
+    let (fs, ms) = match (fs, ms) {
+        (Ok((f, _)), Ok((m, _))) => (f, m),
+        (Err(e), _) | (_, Err(e)) => return helper_err(e),
+    };
+    let st = st.ok().map(|(s, _)| s);
+    ok(storage_view(&fs, &ms, st.as_ref()))
+}
+
+pub(crate) fn storage_view(fs: &FstabState, ms: &[MountInfo], st: Option<&StatusResult>) -> Value {
+    use crate::fstab::Line;
+    use crate::helper::{is_mergerfs, mergerfs_branches};
+    let entries: Vec<(usize, &crate::fstab::FsEntry)> = fs
+        .doc
+        .lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| match l {
+            Line::Entry { entry, .. } => Some((i, entry)),
+            _ => None,
+        })
+        .collect();
+    let mount_of = |t: &str| ms.iter().find(|m| m.target == t);
+    let usage = |m: Option<&MountInfo>| {
+        m.map(|m| json!({"size_bytes": m.size_bytes, "used_bytes": m.used_bytes, "avail_bytes": m.avail_bytes}))
+    };
+    let owner = |b: &str, own: &str| {
+        entries
+            .iter()
+            .map(|(_, e)| e)
+            .filter(|e| e.file != "/" && e.file != own && e.vfstype != "swap")
+            .filter(|e| b == e.file || b.starts_with(&format!("{}/", e.file)))
+            .max_by_key(|e| e.file.len())
+            .map(|e| e.file.clone())
+    };
+    let virt = ["proc", "sysfs", "tmpfs", "devpts", "cgroup2", "efivarfs"];
+    let mut out_entries = vec![];
+    let mut pools = vec![];
+    for (i, e) in &entries {
+        if e.vfstype == "swap" || virt.contains(&e.vfstype.as_str()) {
+            continue;
+        }
+        let m = mount_of(&e.file);
+        let dev = fs.devices.iter().find(|d| {
+            let s = e.spec.to_lowercase();
+            (!d.uuid.is_empty() && s == format!("uuid={}", d.uuid.to_lowercase()))
+                || (!d.label.is_empty() && e.spec == format!("LABEL={}", d.label))
+                || (!d.partuuid.is_empty()
+                    && s == format!("partuuid={}", d.partuuid.to_lowercase()))
+                || e.spec == d.path
+        });
+        let opts = crate::fstab::split_options(&e.options);
+        let pool = is_mergerfs(e);
+        let system =
+            ["/", "/boot", "/boot/efi", "/efi", "/usr", "/var", "/home"].contains(&e.file.as_str());
+        let v = json!({
+            "line": i,
+            "spec": e.spec,
+            "file": e.file,
+            "vfstype": e.vfstype,
+            "options": e.options,
+            "mounted": m.is_some(),
+            "source": m.map(|m| m.source.clone()),
+            "usage": usage(m),
+            "device": dev.map(|d| json!({"name": d.name, "disk": d.disk, "label": d.label, "fstype": d.fstype, "size_bytes": d.size_bytes, "protected": d.protected})),
+            "present": pool || dev.is_some() || !e.spec.contains('='),
+            "system": system,
+            "nofail": opts.iter().any(|(k, _)| k == "nofail"),
+            "pool": pool,
+        });
+        if pool {
+            let branches: Vec<Value> = mergerfs_branches(e)
+                .into_iter()
+                .map(|b| {
+                    let on = owner(&b, &e.file);
+                    let bm = on.as_deref().and_then(mount_of);
+                    json!({
+                        "path": b,
+                        "mount": on,
+                        "mounted": on.is_none() || bm.is_some(),
+                        "usage": usage(bm),
+                        "required": opts.iter().any(|(k, v)| k == "x-systemd.requires-mounts-for" && v.as_deref() == on.as_deref()),
+                    })
+                })
+                .collect();
+            let mut p = v.clone();
+            p["branches"] = json!(branches);
+            p["policy"] = json!(opts
+                .iter()
+                .find(|(k, _)| k == "category.create")
+                .and_then(|(_, v)| v.clone())
+                .unwrap_or_else(|| "epmfs".into()));
+            pools.push(p);
+        }
+        out_entries.push(v);
+    }
+    let known: Vec<&str> = entries.iter().map(|(_, e)| e.file.as_str()).collect();
+    let other: Vec<Value> = ms
+        .iter()
+        .filter(|m| !known.contains(&m.target.as_str()))
+        .filter(|m| !["/", "/boot", "/boot/efi"].contains(&m.target.as_str()))
+        .filter(|m| !m.target.starts_with("/run/") && !m.target.starts_with("/var/lib/"))
+        .map(|m| json!({"target": m.target, "source": m.source, "fstype": m.fstype, "usage": usage(Some(m))}))
+        .collect();
+    json!({
+        "fstab_sha256": fs.sha256,
+        "writes_enabled": fs.writes_enabled,
+        "mergerfs_installed": st.map(|s| s.tools.get("mergerfs").copied().unwrap_or(false)),
+        "tools": st.map(|s| s.tools.clone()),
+        "entries": out_entries,
+        "pools": pools,
+        "other_mounts": other,
+        "devices": fs.devices,
+    })
 }
 
 // ---- fstab editor ----

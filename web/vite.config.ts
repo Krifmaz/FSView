@@ -8,6 +8,8 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: false,
+    // No data: URIs: the CSP only allows assets from the server itself.
+    assetsInlineLimit: 0,
   },
   server: {
     proxy: {

@@ -33,6 +33,57 @@ struct Demo {
     audit: Mutex<Vec<AuditRecord>>,
     /// In-memory /etc/fstab and its backups (name, text).
     fstab: Mutex<Option<DemoFstab>>,
+    /// Demo mount table: target -> (source, fstype, size, used).
+    mounts: Mutex<Vec<MountInfo>>,
+}
+
+fn demo_mounts() -> Vec<MountInfo> {
+    let m = |t: &str, s: &str, f: &str, size: u64, used: u64| MountInfo {
+        target: t.into(),
+        source: s.into(),
+        fstype: f.into(),
+        options: "rw,relatime".into(),
+        size_bytes: size,
+        used_bytes: used,
+        avail_bytes: size - used,
+    };
+    vec![
+        m(
+            "/",
+            "/dev/mapper/pve-root",
+            "ext4",
+            96_000_000_000,
+            12_000_000_000,
+        ),
+        m(
+            "/boot/efi",
+            "/dev/nvme0n1p2",
+            "vfat",
+            1_070_000_000,
+            9_000_000,
+        ),
+        m(
+            "/mnt/cache",
+            "/dev/sda1",
+            "ext4",
+            983_000_000_000,
+            29_000_000_000,
+        ),
+        m(
+            "/mnt/media1",
+            "/dev/sdi",
+            "ext4",
+            27_900_000_000_000,
+            19_400_000_000_000,
+        ),
+        m(
+            "/mnt/drivepool",
+            "media1",
+            "fuse.mergerfs",
+            27_900_000_000_000,
+            19_400_000_000_000,
+        ),
+    ]
 }
 
 fn demo_path_exists(p: &str) -> bool {
@@ -288,6 +339,169 @@ impl Demo {
         })
     }
 
+    fn storage_write(&self, req: &Request) -> Result<Response, HelperError> {
+        let bad = |msg: String| HelperError {
+            code: CODE_BAD_REQUEST.into(),
+            msg,
+            plan: vec![],
+        };
+        let p = &req.params;
+        let s = |k: &str| p[k].as_str().unwrap_or("").to_string();
+        let target = s("target");
+        let (plan, targets) = match req.op.as_str() {
+            OP_MOUNT => {
+                if self
+                    .mounts
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|m| m.target == target)
+                {
+                    return Err(bad(format!("{target} is already mounted")));
+                }
+                (vec![format!("mount {target}")], vec![target.clone()])
+            }
+            OP_UMOUNT => {
+                if ["/", "/boot/efi"].contains(&target.as_str()) {
+                    return Err(bad(format!(
+                        "{target} is a system mount and is never unmounted by FSView"
+                    )));
+                }
+                if target == "/mnt/media1"
+                    && self
+                        .mounts
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .any(|m| m.target == "/mnt/drivepool")
+                {
+                    return Err(bad(
+                        "pool /mnt/drivepool uses /mnt/media1; unmount the pool first".into(),
+                    ));
+                }
+                (vec![format!("umount {target}")], vec![target.clone()])
+            }
+            OP_FS_FORMAT => {
+                let dev = s("device");
+                if dev.starts_with("nvme") {
+                    return Err(HelperError {
+                        code: CODE_PROTECTED.into(),
+                        msg: "nvme0n1 is a protected system disk: holds /".into(),
+                        plan: vec![],
+                    });
+                }
+                if !req.dry_run
+                    && req.confirm_text.trim() != dev.trim_end_matches(char::is_numeric)
+                    && req.confirm_text.trim() != dev
+                {
+                    return Err(HelperError {
+                        code: CODE_NEED_CONFIRM.into(),
+                        msg: "confirmation text does not match".into(),
+                        plan: vec![],
+                    });
+                }
+                let part = p["partition"].as_bool().unwrap_or(false);
+                let fsdev = if part {
+                    format!("/dev/{dev}1")
+                } else {
+                    format!("/dev/{dev}")
+                };
+                let mut plan = vec![format!("wipefs -a /dev/{dev}")];
+                if part {
+                    plan.push(format!("sgdisk --zap-all /dev/{dev}"));
+                    plan.push(format!(
+                        "sgdisk -n 1:0:0 -t 1:8300 -c 1:{} /dev/{dev}",
+                        s("label")
+                    ));
+                    plan.push(format!("partx -u /dev/{dev}"));
+                    plan.push("udevadm settle --timeout=30".into());
+                }
+                plan.push(format!("mkfs.{} -F -L {} {fsdev}", s("fstype"), s("label")));
+                (plan, vec![dev])
+            }
+            OP_FS_CHECK => (
+                vec![format!("e2fsck -f -n /dev/{}", s("device"))],
+                vec![s("device")],
+            ),
+            OP_FS_REPAIR => (
+                vec![format!("e2fsck -f -y /dev/{}", s("device"))],
+                vec![s("device")],
+            ),
+            OP_LOCATE => (
+                vec![format!(
+                    "echo {} > /sys/class/enclosure/2:0:9:0/3/locate",
+                    if p["on"].as_bool() == Some(true) {
+                        1
+                    } else {
+                        0
+                    }
+                )],
+                vec![s("device")],
+            ),
+            _ => unreachable!(),
+        };
+        if !req.dry_run && !req.confirmed {
+            return Err(HelperError {
+                code: CODE_NEED_CONFIRM.into(),
+                msg: "operation must be confirmed".into(),
+                plan: vec![],
+            });
+        }
+        let output = match req.op.as_str() {
+            OP_FS_CHECK => "e2fsck 1.47.2 (1-Jan-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nmedia3: 11/122101760 files (0.0% non-contiguous), 7947223/488378646 blocks\n".to_string(),
+            _ => String::new(),
+        };
+        self.audit.lock().unwrap().insert(
+            0,
+            AuditRecord {
+                time: Utc::now(),
+                actor: req.actor.clone(),
+                client_ip: req.client_ip.clone(),
+                op: req.op.clone(),
+                targets,
+                dry_run: req.dry_run,
+                commands: plan.clone(),
+                result: if req.dry_run {
+                    "dry-run".into()
+                } else {
+                    "ok".into()
+                },
+                output: output.clone(),
+                ..Default::default()
+            },
+        );
+        if !req.dry_run {
+            let mut ms = self.mounts.lock().unwrap();
+            match req.op.as_str() {
+                OP_MOUNT => {
+                    let size = if target.contains("pool") {
+                        27_900_000_000_000
+                    } else {
+                        6_000_000_000_000
+                    };
+                    ms.push(MountInfo {
+                        target: target.clone(),
+                        source: "demo".into(),
+                        fstype: "ext4".into(),
+                        size_bytes: size,
+                        used_bytes: size / 3,
+                        avail_bytes: size - size / 3,
+                        ..Default::default()
+                    });
+                }
+                OP_UMOUNT => ms.retain(|m| m.target != target),
+                _ => {}
+            }
+        }
+        Ok(Response {
+            ok: true,
+            dry_run: req.dry_run,
+            plan,
+            result: json!({"summary": "demo", "output": output}),
+            ..Default::default()
+        })
+    }
+
     fn answer(&self, req: &Request) -> Result<Response, HelperError> {
         let bad = |msg: String| HelperError {
             code: CODE_BAD_REQUEST.into(),
@@ -295,6 +509,9 @@ impl Demo {
             plan: vec![],
         };
         match req.op.as_str() {
+            OP_MOUNT | OP_UMOUNT | OP_FS_FORMAT | OP_FS_CHECK | OP_FS_REPAIR | OP_LOCATE => {
+                return self.storage_write(req);
+            }
             OP_FSTAB_WRITE => {
                 let p: FstabWriteParams =
                     serde_json::from_value(req.params.clone()).map_err(|e| bad(e.to_string()))?;
@@ -331,7 +548,7 @@ impl Demo {
         resp.result = match req.op.as_str() {
             OP_STATUS => {
                 json!({"version": "demo", "hostname": "spiritlab (demo)", "writes_enabled": true, "boot_id": "demo",
-                "tools": {"smartctl": true, "lsblk": true, "sg_ses": true, "lspci": true, "zpool": false, "mergerfs": true}})
+                "tools": {"smartctl": true, "lsblk": true, "sg_ses": true, "lspci": true, "zpool": false, "mergerfs": true, "sgdisk": true, "wipefs": true, "fuser": true, "mkfs.ext4": true, "mkfs.xfs": true, "mkfs.btrfs": false, "mkfs.vfat": true, "mkfs.exfat": false}})
             }
             OP_INVENTORY => serde_json::to_value(self.inventory()).unwrap(),
             OP_SMART_GET => {
@@ -491,6 +708,7 @@ impl Demo {
                 })
                 .unwrap()
             }
+            OP_MOUNTS_LIST => serde_json::to_value(&*self.mounts.lock().unwrap()).unwrap(),
             OP_FSTAB_PREVIEW => {
                 let p: FstabPreviewParams =
                     serde_json::from_value(req.params.clone()).map_err(|e| bad(e.to_string()))?;
@@ -557,6 +775,7 @@ fn main() {
             dir: fixtures.into(),
             audit: Mutex::new(vec![]),
             fstab: Mutex::new(None),
+            mounts: Mutex::new(demo_mounts()),
         }),
     );
     println!("demo UI on http://{listen}  (login demo / demo-password)");

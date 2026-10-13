@@ -46,6 +46,10 @@ pub(super) enum Action {
         content: String,
         expect_sha256: String,
     },
+    /// Write a value to a sysfs attribute (e.g. an enclosure locate LED).
+    WriteSysfs { path: PathBuf, value: String },
+    /// Wait up to 30 s for a device node to appear.
+    WaitDevice(PathBuf),
 }
 
 impl Action {
@@ -61,6 +65,8 @@ impl Action {
                 path.display(),
                 content.len()
             ),
+            Action::WriteSysfs { path, value } => format!("echo {value} > {}", path.display()),
+            Action::WaitDevice(p) => format!("wait for {}", p.display()),
         }
     }
 }
@@ -78,10 +84,11 @@ pub(super) fn failed(msg: impl Into<String>) -> OpError {
 fn class_of(op: &str) -> Option<Class> {
     Some(match op {
         OP_STATUS | OP_INVENTORY | OP_SMART_GET | OP_JOURNAL_KERNEL | OP_BOOT_COLLECT
-        | OP_AUDIT_LIST | OP_HIDDEN_SCAN | OP_FSTAB_READ | OP_FSTAB_PREVIEW | OP_FSTAB_BACKUP => {
-            Class::Read
-        }
-        OP_SMART_SELFTEST | OP_FSTAB_WRITE | OP_FSTAB_ROLLBACK => Class::Write,
+        | OP_AUDIT_LIST | OP_HIDDEN_SCAN | OP_FSTAB_READ | OP_FSTAB_PREVIEW | OP_FSTAB_BACKUP
+        | OP_MOUNTS_LIST => Class::Read,
+        OP_SMART_SELFTEST | OP_FSTAB_WRITE | OP_FSTAB_ROLLBACK | OP_MOUNT | OP_UMOUNT
+        | OP_FS_CHECK | OP_LOCATE => Class::Write,
+        OP_FS_FORMAT | OP_FS_REPAIR => Class::Destructive,
         _ => return None,
     })
 }
@@ -93,7 +100,7 @@ pub(super) fn decode<T: DeserializeOwned + Default>(req: &Request) -> Result<T, 
     serde_json::from_value(req.params.clone()).map_err(|e| bad(format!("invalid params: {e}")))
 }
 
-fn disk_re() -> &'static Regex {
+pub(super) fn disk_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"^(sd[a-z]{1,3}|nvme[0-9]{1,3}n[0-9]{1,3}|vd[a-z]{1,3}|xvd[a-z]{1,3}|hd[a-z]|mmcblk[0-9]{1,3}|loop[0-9]{1,4})$").unwrap())
 }
@@ -103,7 +110,7 @@ fn cursor_re() -> &'static Regex {
     R.get_or_init(|| Regex::new(r"^[A-Za-z0-9=;_\-]+$").unwrap())
 }
 
-fn tool_exists(name: &str) -> bool {
+pub(super) fn tool_exists(name: &str) -> bool {
     use std::os::unix::fs::PermissionsExt;
     ["/usr/sbin", "/usr/bin", "/sbin", "/bin"].iter().any(|d| {
         std::fs::metadata(format!("{d}/{name}"))
@@ -154,6 +161,14 @@ impl Server {
                     "mdadm",
                     "mergerfs",
                     "lvs",
+                    "sgdisk",
+                    "wipefs",
+                    "fuser",
+                    "mkfs.ext4",
+                    "mkfs.xfs",
+                    "mkfs.btrfs",
+                    "mkfs.vfat",
+                    "mkfs.exfat",
                 ] {
                     st.tools.insert(t.into(), tool_exists(t));
                 }
@@ -214,6 +229,7 @@ impl Server {
                 ))
             }
             OP_FSTAB_READ => to(serde_json::to_value(self.fstab_read()?)),
+            OP_MOUNTS_LIST => to(serde_json::to_value(self.mounts_list()?)),
             OP_FSTAB_PREVIEW => {
                 let p: FstabPreviewParams = decode(req)?;
                 to(serde_json::to_value(self.fstab_preview(&p.doc)?))
@@ -259,6 +275,12 @@ impl Server {
             OP_SMART_SELFTEST => self.prep_smart_selftest(req),
             OP_FSTAB_WRITE => self.prep_fstab_write(req),
             OP_FSTAB_ROLLBACK => self.prep_fstab_rollback(req),
+            OP_MOUNT => self.prep_mount(req),
+            OP_UMOUNT => self.prep_umount(req),
+            OP_FS_FORMAT => self.prep_format(req),
+            OP_FS_CHECK => self.prep_fs_check(req, false),
+            OP_FS_REPAIR => self.prep_fs_check(req, true),
+            OP_LOCATE => self.prep_locate(req),
             _ => Err((CODE_UNKNOWN_OP, "unknown".into())),
         }
     }
@@ -339,6 +361,9 @@ impl Server {
                         Ok(o) => {
                             output.push_str(&String::from_utf8_lossy(&o.stdout));
                             output.push_str(&String::from_utf8_lossy(&o.stderr));
+                            if o.code != 0 && tolerated_exit(c, o.code) {
+                                output.push_str(&format!("[{} exit status {}]\n", c[0], o.code));
+                            }
                             (o.code != 0 && !tolerated_exit(c, o.code))
                                 .then(|| format!("{} exited with status {}", c[0], o.code))
                         }
@@ -405,8 +430,18 @@ impl Server {
 }
 
 /// smartctl uses exit bits 2-7 to report disk state, not command failure.
+/// Exit codes that report findings rather than failure: smartctl uses
+/// bits 2-7 for disk state; read-only filesystem checks exit non-zero when
+/// they find problems, which is the result the user asked for.
 fn tolerated_exit(cmd: &[String], code: i32) -> bool {
-    cmd[0] == "smartctl" && code & 0x3 == 0
+    let read_only = cmd.iter().any(|a| a == "-n" || a == "--readonly");
+    match cmd[0].as_str() {
+        "smartctl" => code & 0x3 == 0,
+        // 1 = errors corrected, 2 = reboot advised, 4 = errors left (-n)
+        "e2fsck" => code < if read_only { 8 } else { 4 },
+        "xfs_repair" | "fsck.vfat" | "fsck.exfat" | "btrfs" => read_only && code == 1,
+        _ => false,
+    }
 }
 
 /// Enforces the protected-disk rule and the typed confirmation (device

@@ -4,7 +4,7 @@ Self-hosted web app for disks, filesystems and storage pools on Proxmox VE 9 / D
 
 Written in Rust (axum + tokio backend, no `unsafe` code) with a React + TypeScript UI embedded in the single binary.
 
-**Status: phase 2 (fstab editor).** Phase 1 delivered the read-only foundation: overview, SMART health, kernel disk events, boot check, login and the privilege-separated root helper. Later phases add mount/unmount and format, mergerfs, RAID/ZFS/SnapRAID wizards, notifications and multi-host.
+**Status: phases 1-4 done** (monitoring, fstab editor, mounts and filesystems, mergerfs pools). Later phases add RAID/ZFS/SnapRAID wizards, notifications and multi-host.
 
 ## Features
 
@@ -19,6 +19,10 @@ Written in Rust (axum + tokio backend, no `unsafe` code) with a React + TypeScri
   - warnings: a short `x-systemd.device-timeout` on spinning or shelf disks, `/dev/sdX` names, missing `nofail`, mergerfs pools without `x-systemd.requires-mounts-for`, a filesystem type mismatch.
 
   Every change runs `findmnt --verify` on a scratch copy and shows a diff. The dry-run plan appears in the confirm dialog. On save, the helper makes a timestamped backup in `/var/lib/fsview-helper/backups` (newest 50 kept), creates missing mountpoints under `/mnt`, `/media` and similar, replaces the file atomically (refusing if someone else changed it meanwhile), then runs `systemctl daemon-reload`. Restoring a backup takes one click and is itself backed up first. Mounting comes in phase 3; until then use `mount -a`.
+- **Mounts**: every fstab entry with its live state (mounted, not mounted, disk missing) and usage, plus mounts that are not in fstab. Mount and unmount with one click. FSView never unmounts system mounts or anything on a protected disk, refuses to unmount a disk while a mounted pool uses it, and names the processes that keep a filesystem busy (e.g. Plex) instead of force-unmounting.
+- **Filesystems**: per disk or partition: read-only check, repair, and format (ext4, XFS, Btrfs, exFAT, FAT32), optionally with a fresh GPT partition table and "add to fstab and mount" in the same step. Format and repair need the disk's name or label typed in; protected disks, mounted filesystems and RAID/LVM/ZFS members are refused by the helper.
+- **mergerfs pools**: pools from fstab with per-branch status and usage; create, edit (policy, free-space reserve, caching, branch order) and remove pools. FSView always adds `nofail` and `x-systemd.requires-mounts-for` for every branch disk, and the helper refuses to mount a pool while one of its disks is missing, so a pool can never write onto the system disk.
+- **Enclosure locate LED**: blink a disk's bay on a SAS shelf (kernel `ses` driver) to find it.
 - **Audit log**: every write attempt is recorded by the helper, including dry runs and rejected attempts.
 
 ## Install

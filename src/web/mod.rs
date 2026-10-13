@@ -378,6 +378,12 @@ impl App {
         Ok(rep)
     }
 
+    /// Drops cached inventory and boot report after a write.
+    pub async fn invalidate_caches(&self) {
+        *self.inv.lock().await = None;
+        *self.boot.lock().await = None;
+    }
+
     /// Drops the cached boot report (fstab changed).
     pub async fn invalidate_boot(&self) {
         *self.boot.lock().await = None;

@@ -578,7 +578,216 @@ struct Rmdir(String);
 
 impl Drop for Rmdir {
     fn drop(&mut self) {
-        let _ = Command::new("umount").args(["-l", &self.0]).status();
+        let _ = Command::new("umount")
+            .args(["-l", &self.0])
+            .stderr(std::process::Stdio::null())
+            .status();
         let _ = std::fs::remove_dir(&self.0);
     }
+}
+
+fn op(
+    h: &Helper,
+    op: &str,
+    p: serde_json::Value,
+    confirm: &str,
+) -> Result<Response, fsview::helperclient::HelperError> {
+    call(
+        h,
+        Request {
+            op: op.into(),
+            actor: "it".into(),
+            confirmed: true,
+            confirm_text: confirm.into(),
+            params: p,
+            ..Default::default()
+        },
+    )
+}
+
+fn have(tool: &str) -> bool {
+    ["/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+        .iter()
+        .any(|d| Path::new(d).join(tool).exists())
+}
+
+/// Phase 3/4 end to end on loop devices: check, format, mount and
+/// unmount through fstab, busy detection, mergerfs pool guards.
+#[test]
+fn storage_ops_on_loop_devices() {
+    if !root() {
+        return;
+    }
+    let a = new_loop("fsvtest10");
+    let b = new_loop("fsvtest11");
+    let dir = tempfile::tempdir().unwrap();
+    let fstab_path = dir.path().join("fstab");
+    let base = format!("/mnt/fsview-it-{}", std::process::id());
+    let (ma, mb, mp) = (
+        format!("{base}-a"),
+        format!("{base}-b"),
+        format!("{base}-pool"),
+    );
+    let _clean = [Rmdir(mp.clone()), Rmdir(mb.clone()), Rmdir(ma.clone())];
+    let h = start_helper(Config {
+        allowed_uids: vec![0],
+        include_loop: true,
+        writes_enabled: true,
+        fstab_path: fstab_path.clone(),
+        version: "it".into(),
+        ..Default::default()
+    });
+
+    // Read-only check of a clean filesystem.
+    let r = op(&h, OP_FS_CHECK, serde_json::json!({"device": a.name()}), "").unwrap();
+    assert!(r.plan[0].starts_with("e2fsck -f -n"), "{:?}", r.plan);
+
+    // Format needs the typed device name.
+    let fmt = serde_json::json!({"device": a.name(), "fstype": "ext4", "label": "itfmt"});
+    let e = op(&h, OP_FS_FORMAT, fmt.clone(), "wrong").unwrap_err();
+    assert_eq!(e.code, CODE_NEED_CONFIRM);
+    op(&h, OP_FS_FORMAT, fmt, &a.name()).unwrap_or_else(|e| panic!("format: {}", e.msg));
+    assert_eq!(
+        run("blkid", &["-s", "LABEL", "-o", "value", &a.dev]),
+        "itfmt"
+    );
+    let uuid_a = run("blkid", &["-s", "UUID", "-o", "value", &a.dev]);
+
+    // fstab entries for both disks, then mount through the helper.
+    std::fs::write(
+        &fstab_path,
+        format!(
+            "UUID={uuid_a} {ma} ext4 defaults,nofail 0 2\n{} {mb} ext4 defaults,nofail 0 2\n",
+            b.dev
+        ),
+    )
+    .unwrap();
+    for t in [&ma, &mb] {
+        op(&h, OP_MOUNT, serde_json::json!({ "target": t }), "")
+            .unwrap_or_else(|e| panic!("mount {t}: {}", e.msg));
+        assert!(!run("findmnt", &["-n", "-o", "SOURCE", t]).is_empty());
+    }
+    let e = op(&h, OP_MOUNT, serde_json::json!({ "target": ma }), "").unwrap_err();
+    assert!(e.msg.contains("already mounted"), "{}", e.msg);
+
+    // A busy filesystem is not unmounted.
+    if have("fuser") {
+        let f = std::fs::File::create(format!("{ma}/busy")).unwrap();
+        let e = op(&h, OP_UMOUNT, serde_json::json!({ "target": ma }), "").unwrap_err();
+        assert!(e.msg.contains("in use by"), "{}", e.msg);
+        drop(f);
+    }
+
+    // Formatting a mounted disk is refused before anything runs.
+    let e = op(
+        &h,
+        OP_FS_FORMAT,
+        serde_json::json!({"device": b.name(), "fstype": "ext4", "label": "x"}),
+        &b.name(),
+    )
+    .unwrap_err();
+    assert!(e.msg.contains("in use"), "{}", e.msg);
+
+    if have("mergerfs") && Path::new("/dev/fuse").exists() {
+        std::fs::create_dir_all(format!("{ma}/data")).unwrap();
+        std::fs::create_dir_all(format!("{mb}/data")).unwrap();
+        let mut f = std::fs::read_to_string(&fstab_path).unwrap();
+        f.push_str(&format!(
+            "{ma}/data:{mb}/data {mp} fuse.mergerfs defaults,allow_other,category.create=mfs,minfreespace=1M,nofail,x-systemd.requires-mounts-for={ma},x-systemd.requires-mounts-for={mb} 0 0\n"
+        ));
+        std::fs::write(&fstab_path, f).unwrap();
+        // Pool refuses to mount while a branch disk is missing.
+        op(&h, OP_UMOUNT, serde_json::json!({ "target": mb }), "").unwrap();
+        let e = op(&h, OP_MOUNT, serde_json::json!({ "target": mp }), "").unwrap_err();
+        assert!(e.msg.contains("not mounted"), "{}", e.msg);
+        op(&h, OP_MOUNT, serde_json::json!({ "target": mb }), "").unwrap();
+        op(&h, OP_MOUNT, serde_json::json!({ "target": mp }), "")
+            .unwrap_or_else(|e| panic!("mount pool: {}", e.msg));
+        std::fs::write(format!("{mp}/hello"), "x").unwrap();
+        assert!(
+            Path::new(&format!("{ma}/data/hello")).exists()
+                || Path::new(&format!("{mb}/data/hello")).exists(),
+            "file written through the pool lands on a branch"
+        );
+        // A disk under a mounted pool cannot be unmounted.
+        let e = op(&h, OP_UMOUNT, serde_json::json!({ "target": ma }), "").unwrap_err();
+        assert!(e.msg.contains("unmount the pool first"), "{}", e.msg);
+        let mounts: Vec<MountInfo> = serde_json::from_value(
+            call(
+                &h,
+                Request {
+                    op: OP_MOUNTS_LIST.into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .result,
+        )
+        .unwrap();
+        assert!(
+            mounts
+                .iter()
+                .any(|m| m.target == mp && m.fstype == "fuse.mergerfs"),
+            "{mounts:?}"
+        );
+        op(&h, OP_UMOUNT, serde_json::json!({ "target": mp }), "").unwrap();
+    } else {
+        eprintln!("mergerfs not available; skipping pool checks");
+    }
+    for t in [&ma, &mb] {
+        op(&h, OP_UMOUNT, serde_json::json!({ "target": t }), "")
+            .unwrap_or_else(|e| panic!("umount {t}: {}", e.msg));
+    }
+    for t in ["/", "/proc"] {
+        let e = op(&h, OP_UMOUNT, serde_json::json!({ "target": t }), "").unwrap_err();
+        assert!(e.msg.contains("system mount"), "{t}: {}", e.msg);
+    }
+}
+
+/// New GPT partition table + format on a partition-scanning loop device.
+#[test]
+fn format_with_new_partition_table() {
+    if !root() || !have("sgdisk") {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let img = d.path().join("p.img");
+    std::fs::File::create(&img)
+        .unwrap()
+        .set_len(96 << 20)
+        .unwrap();
+    let dev = run("losetup", &["-fP", "--show", img.to_str().unwrap()]);
+    struct Detach(String);
+    impl Drop for Detach {
+        fn drop(&mut self) {
+            let _ = Command::new("losetup").args(["-d", &self.0]).status();
+        }
+    }
+    let _g = Detach(dev.clone());
+    let name = dev.trim_start_matches("/dev/").to_string();
+    let h = start_helper(Config {
+        allowed_uids: vec![0],
+        include_loop: true,
+        writes_enabled: true,
+        version: "it".into(),
+        ..Default::default()
+    });
+    let r = op(
+        &h,
+        OP_FS_FORMAT,
+        serde_json::json!({"device": name, "fstype": "ext4", "label": "itpart", "partition": true}),
+        &name,
+    )
+    .unwrap_or_else(|e| panic!("format: {} {}", e.code, e.msg));
+    assert!(
+        r.plan.iter().any(|p| p.starts_with("sgdisk -n 1:0:0")),
+        "{:?}",
+        r.plan
+    );
+    let part = format!("{dev}p1");
+    assert_eq!(
+        run("blkid", &["-s", "LABEL", "-o", "value", &part]),
+        "itpart"
+    );
+    assert_eq!(run("blkid", &["-s", "PTTYPE", "-o", "value", &dev]), "gpt");
 }

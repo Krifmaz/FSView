@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   Activity,
   FileCog,
+  FolderTree,
+  Layers,
   HardDrive,
   HeartPulse,
   LogOut,
@@ -26,6 +28,8 @@ import HealthPage from "./pages/Health";
 import EventsPage from "./pages/Events";
 import BootPage from "./pages/Boot";
 import FstabPage from "./pages/Fstab";
+import MountsPage from "./pages/Mounts";
+import PoolsPage from "./pages/Pools";
 import AuditPage from "./pages/Audit";
 import SettingsPage from "./pages/Settings";
 
@@ -41,7 +45,11 @@ const GROUPS: { label: string; items: { id: string; label: string; icon: LucideI
   },
   {
     label: "Configure",
-    items: [{ id: "fstab", label: "fstab", icon: FileCog }],
+    items: [
+      { id: "mounts", label: "Mounts", icon: FolderTree },
+      { id: "pools", label: "Pools", icon: Layers },
+      { id: "fstab", label: "fstab", icon: FileCog },
+    ],
   },
   {
     label: "Manage",
@@ -115,6 +123,12 @@ export default function App() {
       break;
     case "boot":
       content = <BootPage />;
+      break;
+    case "mounts":
+      content = <MountsPage />;
+      break;
+    case "pools":
+      content = <PoolsPage />;
       break;
     case "fstab":
       content = <FstabPage />;

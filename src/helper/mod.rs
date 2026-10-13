@@ -9,10 +9,12 @@ mod fstabops;
 mod hidden;
 mod ops;
 mod smart;
+mod storage;
 
 pub use audit::{AuditLog, AuditRecord};
 pub use hidden::plan_hidden_scan;
 pub use ops::check_destructive;
+pub use storage::{is_mergerfs, mergerfs_branches};
 
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;

@@ -3,6 +3,7 @@ import { api, ApiError } from "../api";
 import { ConfirmDialog, ErrorBox, Loading, ProtectedBadge, StatusBadge, Temp, UsageBar, type ConfirmSpec } from "../components";
 import type { DiskDetail, Node, SmartReport } from "../types";
 import { fmtBytes, fmtHours, fmtTime, slotLabel, timeAgo, useFetch } from "../util";
+import DiskActions from "./DiskActions";
 
 function Tree({ nodes }: { nodes?: Node[] }) {
   if (!nodes?.length) return null;
@@ -257,6 +258,8 @@ export default function DiskPage({ name }: { name: string }) {
         {d.usage && <UsageBar usage={d.usage} />}
         {d.children?.length ? <Tree nodes={d.children} /> : !d.fstype && <span className="dim">No partitions or filesystem.</span>}
       </div>
+
+      <DiskActions d={d} onChanged={reload} />
 
       <div className="between">
         <h2>SMART</h2>

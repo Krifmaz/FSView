@@ -17,6 +17,13 @@ pub const OP_FSTAB_PREVIEW: &str = "fstab.preview";
 pub const OP_FSTAB_BACKUP: &str = "fstab.backup";
 pub const OP_FSTAB_WRITE: &str = "fstab.write";
 pub const OP_FSTAB_ROLLBACK: &str = "fstab.rollback";
+pub const OP_MOUNTS_LIST: &str = "mounts.list";
+pub const OP_MOUNT: &str = "mount";
+pub const OP_UMOUNT: &str = "umount";
+pub const OP_FS_FORMAT: &str = "fs.format";
+pub const OP_FS_CHECK: &str = "fs.check";
+pub const OP_FS_REPAIR: &str = "fs.repair";
+pub const OP_LOCATE: &str = "enclosure.locate";
 
 /// Upper bound for requests and responses on the socket.
 pub const MAX_MESSAGE: usize = 32 << 20;
@@ -248,4 +255,58 @@ pub struct FstabBackupView {
 pub struct FstabRollbackParams {
     pub name: String,
     pub base_sha256: String,
+}
+
+// ---- mounts and filesystems ----
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MountParams {
+    /// Mountpoint of an fstab entry (mount) or of an active mount (umount).
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormatParams {
+    /// Disk ("sdb") or partition ("sdb1") name.
+    pub device: String,
+    /// ext4 | xfs | btrfs | vfat | exfat
+    pub fstype: String,
+    pub label: String,
+    /// Whole disk only: replace the partition table with GPT and one
+    /// partition spanning the disk, then format that partition.
+    #[serde(default)]
+    pub partition: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FsCheckParams {
+    /// Disk or partition holding the filesystem.
+    pub device: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocateParams {
+    /// Disk whose enclosure slot LED to switch.
+    pub device: String,
+    pub on: bool,
+}
+
+/// An active mount with usage (from findmnt).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MountInfo {
+    pub target: String,
+    pub source: String,
+    pub fstype: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub options: String,
+    #[serde(default)]
+    pub size_bytes: u64,
+    #[serde(default)]
+    pub used_bytes: u64,
+    #[serde(default)]
+    pub avail_bytes: u64,
 }

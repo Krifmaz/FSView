@@ -16,7 +16,7 @@ const OPTION_HINTS = [
 // Filesystems that are not mounted through fstab directly.
 const NOT_MOUNTABLE = ["swap", "LVM2_member", "linux_raid_member", "zfs_member", "crypto_LUKS", "ddf_raid_member", "isw_raid_member"];
 
-function DiffView({ diff, context = true }: { diff: DiffLine[]; context?: boolean }) {
+export function DiffView({ diff, context = true }: { diff: DiffLine[]; context?: boolean }) {
   const lines = context ? diff : diff.filter((l) => l.op !== " ");
   if (!lines.some((l) => l.op !== " ")) return <div className="dim small">No differences.</div>;
   return (

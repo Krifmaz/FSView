@@ -544,3 +544,143 @@ fn fstab_write_detects_concurrent_change() {
         "# someone else\n"
     );
 }
+
+// ---- mounts and filesystems ----
+
+fn storage_req(op: &str, p: serde_json::Value, dry: bool, confirm: &str) -> Request {
+    let mut r = req(op, p);
+    r.dry_run = dry;
+    r.confirmed = !dry;
+    r.confirm_text = confirm.into();
+    r
+}
+
+#[test]
+fn umount_rules() {
+    let f = fstab_server(true);
+    for (t, frag) in [
+        ("/", "system mount"),
+        ("/boot/efi", "system mount"),
+        ("/proc", "system mount"),
+        ("/mnt/nothere", "not mounted"),
+        ("relative", "absolute"),
+    ] {
+        let r =
+            f.t.srv
+                .handle(&storage_req(OP_UMOUNT, json!({ "target": t }), true, ""), 1);
+        assert!(
+            r.code == CODE_BAD_REQUEST && r.error.contains(frag),
+            "{t}: {r:?}"
+        );
+    }
+    let r = f.t.srv.handle(
+        &storage_req(OP_UMOUNT, json!({"target": "/mnt/cache"}), true, ""),
+        1,
+    );
+    assert!(r.ok && r.plan == vec!["umount /mnt/cache"], "{r:?}");
+}
+
+#[test]
+fn format_rules() {
+    let f = fstab_server(true);
+    // Protected (root VG) or in use: always refused.
+    for dev in ["nvme0n1", "nvme0n1p2"] {
+        let r = f.t.srv.handle(
+            &storage_req(
+                OP_FS_FORMAT,
+                json!({"device": dev, "fstype": "ext4", "label": "x"}),
+                false,
+                dev,
+            ),
+            1,
+        );
+        assert!(!r.ok, "{dev} formatted: {r:?}");
+        assert!(
+            r.code == CODE_PROTECTED || r.error.contains("in use") || r.error.contains("used by"),
+            "{dev}: {r:?}"
+        );
+    }
+    // Mounted cache partition.
+    let r = f.t.srv.handle(
+        &storage_req(
+            OP_FS_FORMAT,
+            json!({"device": "sda1", "fstype": "ext4", "label": "x"}),
+            true,
+            "",
+        ),
+        1,
+    );
+    assert!(r.error.contains("in use"), "{r:?}");
+    for bad_label in ["", "a b", "x;reboot"] {
+        let r = f.t.srv.handle(
+            &storage_req(
+                OP_FS_FORMAT,
+                json!({"device": "sdc", "fstype": "ext4", "label": bad_label}),
+                true,
+                "",
+            ),
+            1,
+        );
+        assert_eq!(r.code, CODE_BAD_REQUEST, "{bad_label:?}");
+    }
+    if !tool_exists_for_test("mkfs.ext4") || !tool_exists_for_test("wipefs") {
+        return;
+    }
+    let p = json!({"device": "sdc", "fstype": "ext4", "label": "media3"});
+    let r =
+        f.t.srv
+            .handle(&storage_req(OP_FS_FORMAT, p.clone(), true, ""), 1);
+    assert!(r.ok && r.dry_run, "{r:?}");
+    assert_eq!(r.plan[0], "wipefs -a /dev/sdc");
+    assert!(
+        r.plan
+            .iter()
+            .any(|c| c == "mkfs.ext4 -F -L media3 /dev/sdc"),
+        "{:?}",
+        r.plan
+    );
+    let r =
+        f.t.srv
+            .handle(&storage_req(OP_FS_FORMAT, p.clone(), false, ""), 1);
+    assert_eq!(r.code, CODE_NEED_CONFIRM);
+    let r =
+        f.t.srv
+            .handle(&storage_req(OP_FS_FORMAT, p, false, "sdd"), 1);
+    assert_eq!(r.code, CODE_NEED_CONFIRM, "wrong disk name accepted");
+    assert!(
+        !f.t.fake
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("wipefs") || c.starts_with("mkfs")),
+        "nothing may run without confirmation: {:?}",
+        f.t.fake.calls()
+    );
+}
+
+fn tool_exists_for_test(t: &str) -> bool {
+    ["/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+        .iter()
+        .any(|d| std::path::Path::new(d).join(t).exists())
+}
+
+#[test]
+fn mount_requires_fstab_entry_and_pool_branches() {
+    let f = fstab_server(true);
+    std::fs::write(
+        &f.fstab,
+        "/mnt/b1:/mnt/b2 /mnt/pool fuse.mergerfs defaults,nofail 0 0\nUUID=x /mnt/b1 ext4 defaults,nofail 0 2\n",
+    )
+    .unwrap();
+    let r = f.t.srv.handle(
+        &storage_req(OP_MOUNT, json!({"target": "/mnt/other"}), true, ""),
+        1,
+    );
+    assert!(r.error.contains("not in"), "{r:?}");
+    if tool_exists_for_test("mergerfs") {
+        let r = f.t.srv.handle(
+            &storage_req(OP_MOUNT, json!({"target": "/mnt/pool"}), true, ""),
+            1,
+        );
+        assert!(r.error.contains("/mnt/b1 which is not mounted"), "{r:?}");
+    }
+}

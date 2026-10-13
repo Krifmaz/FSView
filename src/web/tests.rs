@@ -55,6 +55,14 @@ impl HelperApi for FakeHelper {
                     Some("sdb") => json!({"device": "sdb", "devtype": "sat", "exit_status": 0, "standby": false, "raw": serde_json::from_slice::<Value>(&fx("smart_sdb_sat_synthetic.json")).unwrap()}),
                     _ => return e(CODE_EXEC_FAILED, "no data"),
                 },
+                OP_MOUNT | OP_UMOUNT | OP_FS_FORMAT | OP_FS_CHECK | OP_FS_REPAIR | OP_LOCATE => {
+                    if !writes {
+                        return e(CODE_WRITES_OFF, "writes disabled");
+                    }
+                    resp.dry_run = req.dry_run;
+                    resp.plan = vec![format!("{} {}", req.op, req.params)];
+                    json!({"summary": "x"})
+                }
                 OP_FSTAB_WRITE | OP_FSTAB_ROLLBACK => {
                     if !writes {
                         return e(CODE_WRITES_OFF, "writes disabled");
@@ -546,4 +554,101 @@ async fn enclosure_ignore_endpoint_and_settings_keep_list() {
     .await;
     assert_eq!(s, StatusCode::OK);
     assert!(t.app.store.settings().ignored_elements.is_empty());
+}
+
+#[tokio::test]
+async fn storage_write_endpoints() {
+    let t = setup();
+    let tok = login(&t).await;
+    *t.helper.writes.lock().unwrap() = true;
+    let post = |path: &'static str, body: &'static str| {
+        let t = &t;
+        let tok = tok.clone();
+        async move { send(t, "POST", path, body, Some(&tok), true, LAN).await }
+    };
+    let (s, _, b) = post(
+        "/api/mounts/umount",
+        r#"{"target":"/mnt/cache","dry_run":true}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let last = t.helper.reqs.lock().unwrap().last().cloned().unwrap();
+    assert_eq!((last.op.as_str(), last.dry_run), (OP_UMOUNT, true));
+    assert_eq!(last.params, json!({"target": "/mnt/cache"}));
+
+    let (s, _, b) = post(
+        "/api/disks/sdc/format",
+        r#"{"device":"sdc","fstype":"ext4","label":"m3","confirmed":true,"confirm_text":"sdc"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let last = t.helper.reqs.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(
+        (last.op.as_str(), last.confirm_text.as_str()),
+        (OP_FS_FORMAT, "sdc")
+    );
+    assert_eq!(last.params["label"], "m3");
+
+    // Device must belong to the disk in the URL.
+    let (s, _, _) = post(
+        "/api/disks/sdc/format",
+        r#"{"device":"sda1","fstype":"ext4","label":"x"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // Unknown fields are rejected.
+    let (s, _, _) = post(
+        "/api/mounts/mount",
+        r#"{"target":"/mnt/a","args":"-o remount"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    let (s, _, b) = post(
+        "/api/disks/sdc/check",
+        r#"{"device":"sdc","repair":true,"dry_run":true}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let last = t.helper.reqs.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(last.op, OP_FS_REPAIR);
+    let (s, _, _) = post("/api/disks/sdc/locate", r#"{"on":true,"confirmed":true}"#).await;
+    assert_eq!(s, StatusCode::OK);
+}
+
+#[test]
+fn storage_view_pools() {
+    use crate::fstab;
+    let text = "UUID=u1 /mnt/media1 ext4 defaults,nofail 0 2\nUUID=u2 /mnt/media2 ext4 defaults,nofail 0 2\n/mnt/media1/data:/mnt/media2/data /mnt/pool fuse.mergerfs category.create=mfs,x-systemd.requires-mounts-for=/mnt/media1,nofail 0 0\n/dev/pve/swap none swap sw 0 0\n";
+    let fs = FstabState {
+        doc: fstab::parse(text),
+        devices: vec![fstab::Device {
+            path: "/dev/sdb".into(),
+            name: "sdb".into(),
+            disk: "sdb".into(),
+            fstype: "ext4".into(),
+            uuid: "u1".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let ms = vec![MountInfo {
+        target: "/mnt/media1".into(),
+        source: "/dev/sdb".into(),
+        fstype: "ext4".into(),
+        size_bytes: 10,
+        ..Default::default()
+    }];
+    let v = super::handlers::storage_view(&fs, &ms, None);
+    assert_eq!(v["entries"].as_array().unwrap().len(), 3, "swap skipped");
+    assert_eq!(v["entries"][0]["mounted"], true);
+    assert_eq!(v["entries"][0]["device"]["name"], "sdb");
+    assert_eq!(v["entries"][1]["present"], false);
+    let p = &v["pools"][0];
+    assert_eq!(p["policy"], "mfs");
+    assert_eq!(p["branches"][0]["mount"], "/mnt/media1");
+    assert_eq!(p["branches"][0]["mounted"], true);
+    assert_eq!(p["branches"][0]["required"], true);
+    assert_eq!(p["branches"][1]["mounted"], false);
+    assert_eq!(p["branches"][1]["required"], false);
 }

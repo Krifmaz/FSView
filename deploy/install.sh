@@ -76,14 +76,17 @@ else
   BINARY="$SRC/fsview"
 fi
 
-info "installing packages (smartmontools, pciutils)"
+info "installing packages (smartmontools, pciutils, sg3-utils, psmisc, gdisk)"
 NEED=()
 command -v smartctl >/dev/null || NEED+=(smartmontools)
 command -v lspci >/dev/null || NEED+=(pciutils)
+command -v sg_ses >/dev/null || NEED+=(sg3-utils)   # SAS shelf status
+command -v fuser >/dev/null || NEED+=(psmisc)       # "in use by" on unmount
+command -v sgdisk >/dev/null || NEED+=(gdisk)       # new partition tables
 if [ ${#NEED[@]} -gt 0 ]; then
   apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${NEED[@]}"
 fi
-command -v sg_ses >/dev/null || echo "    optional: apt install sg3-utils lsscsi (enclosure/shelf details)"
+command -v mergerfs >/dev/null || echo "    optional: apt install mergerfs (pools)"
 
 if ! id fsview >/dev/null 2>&1; then
   info "creating system user fsview"
@@ -128,6 +131,6 @@ if [ -n "$FIRST_PW" ]; then
 fi
 if ! grep -Eiq '^[[:space:]]*writes_enabled[[:space:]]*=[[:space:]]*(true|yes|1)' "$ETC/helper.conf"; then
   echo
-  echo "Read-only mode is on. To allow write operations (SMART self-tests, fstab edits):"
+  echo "Read-only mode is on. To allow write operations (SMART tests, fstab, mounts, format, pools):"
   echo "  set writes_enabled = true in $ETC/helper.conf, then: systemctl restart fsview-helper"
 fi

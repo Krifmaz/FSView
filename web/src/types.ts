@@ -442,3 +442,51 @@ export interface WriteResult {
   plan: string[];
   result?: { summary?: string; output?: string };
 }
+
+// ---- mounts and pools ----
+
+export interface UsageInfo {
+  size_bytes: number;
+  used_bytes: number;
+  avail_bytes: number;
+}
+
+export interface StorageEntry {
+  line: number;
+  spec: string;
+  file: string;
+  vfstype: string;
+  options: string;
+  mounted: boolean;
+  source?: string | null;
+  usage?: UsageInfo | null;
+  device?: { name: string; disk: string; label: string; fstype: string; size_bytes: number; protected: boolean } | null;
+  present: boolean;
+  system: boolean;
+  nofail: boolean;
+  pool: boolean;
+}
+
+export interface PoolBranch {
+  path: string;
+  mount?: string | null;
+  mounted: boolean;
+  usage?: UsageInfo | null;
+  required: boolean;
+}
+
+export interface Pool extends StorageEntry {
+  branches: PoolBranch[];
+  policy: string;
+}
+
+export interface StorageView {
+  fstab_sha256: string;
+  writes_enabled: boolean;
+  mergerfs_installed?: boolean | null;
+  tools?: Record<string, boolean> | null;
+  entries: StorageEntry[];
+  pools: Pool[];
+  other_mounts: { target: string; source: string; fstype: string; usage?: UsageInfo | null }[];
+  devices: FstabDevice[];
+}

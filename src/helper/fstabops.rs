@@ -306,6 +306,18 @@ pub(super) fn apply_file_action(a: &Action) -> Result<(), String> {
             content,
             expect_sha256,
         } => write_atomic(path, content, expect_sha256),
+        Action::WriteSysfs { path, value } => {
+            std::fs::write(path, value).map_err(|e| format!("write {}: {e}", path.display()))
+        }
+        Action::WaitDevice(p) => {
+            for _ in 0..60 {
+                if p.exists() {
+                    return Ok(());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            Err(format!("{} did not appear", p.display()))
+        }
     }
 }
 

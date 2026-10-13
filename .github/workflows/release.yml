@@ -3,6 +3,11 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to create, e.g. v0.1.0"
+        required: true
 
 permissions:
   contents: write
@@ -10,8 +15,12 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+      - name: Validate version
+        run: echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -24,18 +33,22 @@ jobs:
           go test ./...
       - name: Build tarballs
         run: |
-          make dist ARCH=amd64 VERSION=${GITHUB_REF_NAME}
-          make build ARCH=arm64 VERSION=${GITHUB_REF_NAME}
-          d=dist/fsview-${GITHUB_REF_NAME}-linux-arm64
+          make dist ARCH=amd64 VERSION=$VERSION
+          make build ARCH=arm64 VERSION=$VERSION
+          d=dist/fsview-$VERSION-linux-arm64
           mkdir -p $d && cp bin/fsview deploy/install.sh deploy/uninstall.sh deploy/fsview.conf deploy/helper.conf $d/ && cp -r deploy/systemd $d/
-          tar -C dist -czf $d.tar.gz fsview-${GITHUB_REF_NAME}-linux-arm64
+          tar -C dist -czf $d.tar.gz fsview-$VERSION-linux-arm64
           cp deploy/install.sh deploy/uninstall.sh dist/
           cd dist && sha256sum *.tar.gz > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: FSView ${{ env.VERSION }}
+          make_latest: "true"
+          generate_release_notes: true
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
             dist/install.sh
             dist/uninstall.sh
-          generate_release_notes: true

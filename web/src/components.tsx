@@ -62,6 +62,7 @@ export interface ConfirmSpec {
   plan?: string[];
   confirmLabel?: string;
   extra?: ReactNode;
+  wide?: boolean;
 }
 
 /**
@@ -75,7 +76,7 @@ export function ConfirmDialog({ spec, busy, onConfirm, onCancel }: { spec: Confi
   const ok = !spec.destructive || accepted.includes(typed.trim());
   return (
     <div className="modal-bg" role="dialog" aria-modal="true" onClick={onCancel}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal${spec.wide ? " wide" : ""}`} onClick={(e) => e.stopPropagation()}>
         <h2>{spec.title}</h2>
         {d && (
           <dl className="kv" style={{ marginBottom: 12 }}>

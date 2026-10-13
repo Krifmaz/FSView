@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 
 use fsview::bootcheck;
 use fsview::events;
+use fsview::fstab;
 use fsview::helper::AuditRecord;
 use fsview::helperclient::{CallFuture, HelperApi, HelperError};
 use fsview::inventory::{
@@ -24,10 +25,29 @@ use fsview::proto::*;
 use fsview::store::Store;
 use fsview::web::{App, Options};
 
+/// Current fstab text and its backups (name, text), newest first.
+type DemoFstab = (String, Vec<(String, String)>);
+
 struct Demo {
     dir: PathBuf,
     audit: Mutex<Vec<AuditRecord>>,
+    /// In-memory /etc/fstab and its backups (name, text).
+    fstab: Mutex<Option<DemoFstab>>,
 }
+
+fn demo_path_exists(p: &str) -> bool {
+    [
+        "/",
+        "/boot/efi",
+        "/proc",
+        "/mnt/media1",
+        "/mnt/cache",
+        "/mnt/drivepool",
+    ]
+    .contains(&p)
+}
+
+const DEMO_FS: [&str; 6] = ["ext4", "vfat", "xfs", "btrfs", "proc", "fuse"];
 
 impl Demo {
     fn read(&self, n: &str) -> Vec<u8> {
@@ -146,7 +166,163 @@ impl Demo {
         }
     }
 
+    fn fstab_text(&self) -> DemoFstab {
+        let mut g = self.fstab.lock().unwrap();
+        g.get_or_insert_with(|| {
+            (
+                String::from_utf8_lossy(&self.read("fstab")).into_owned(),
+                vec![],
+            )
+        })
+        .clone()
+    }
+
+    fn fstab_issues(&self, doc: &fstab::Doc) -> (Vec<fstab::Device>, Vec<fstab::Issue>) {
+        let devices = fstab::devices(&self.inventory());
+        let kfs: Vec<String> = DEMO_FS.iter().map(|s| s.to_string()).collect();
+        let issues = fstab::validate(
+            doc,
+            &fstab::Context {
+                devices: &devices,
+                kernel_fs: &kfs,
+                path_exists: &demo_path_exists,
+            },
+        );
+        (devices, issues)
+    }
+
+    fn fstab_preview(&self, doc: &fstab::Doc) -> FstabPreview {
+        let (old, _) = self.fstab_text();
+        let text = fstab::render(doc);
+        let (_, issues) = self.fstab_issues(doc);
+        let create_dirs = fstab::mountpoints_to_create(doc, &demo_path_exists);
+        let verify = fstab::Verify {
+            ok: true,
+            ..Default::default()
+        };
+        let changed = text != old;
+        FstabPreview {
+            base_sha256: fstab::sha256_hex(&old),
+            diff: fstab::diff(&old, &text),
+            can_apply: changed && !issues.iter().any(|i| i.level == "error"),
+            text,
+            changed,
+            issues,
+            verify,
+            create_dirs,
+        }
+    }
+
+    fn fstab_write(
+        &self,
+        req: &Request,
+        new: String,
+        mut plan: Vec<String>,
+    ) -> Result<Response, HelperError> {
+        let fail = |code: &str, msg: String| HelperError {
+            code: code.into(),
+            msg,
+            plan: vec![],
+        };
+        let (old, mut backups) = self.fstab_text();
+        if req.params["base_sha256"].as_str() != Some(&fstab::sha256_hex(&old)) {
+            return Err(fail(
+                CODE_BAD_REQUEST,
+                "fstab changed since it was loaded; reload".into(),
+            ));
+        }
+        if new == old {
+            return Err(fail(CODE_BAD_REQUEST, "no changes to apply".into()));
+        }
+        let name = format!("fstab.{}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+        let name = if backups.iter().any(|(n, _)| *n == name) {
+            format!("{name}.{}", backups.len())
+        } else {
+            name
+        };
+        plan.insert(
+            0,
+            format!("cp --preserve=mode /etc/fstab /var/lib/fsview-helper/backups/{name}"),
+        );
+        plan.push(format!(
+            "write /etc/fstab ({} bytes, atomic replace)",
+            new.len()
+        ));
+        plan.push("systemctl daemon-reload".into());
+        let detail = fstab::diff_text(&fstab::diff(&old, &new));
+        if !req.dry_run && !req.confirmed {
+            return Err(fail(
+                CODE_NEED_CONFIRM,
+                "operation must be confirmed".into(),
+            ));
+        }
+        self.audit.lock().unwrap().insert(
+            0,
+            AuditRecord {
+                time: Utc::now(),
+                actor: req.actor.clone(),
+                client_ip: req.client_ip.clone(),
+                op: req.op.clone(),
+                targets: vec!["/etc/fstab".into()],
+                dry_run: req.dry_run,
+                commands: plan.clone(),
+                result: if req.dry_run {
+                    "dry-run".into()
+                } else {
+                    "ok".into()
+                },
+                output: detail.clone(),
+                ..Default::default()
+            },
+        );
+        if !req.dry_run {
+            backups.insert(0, (name, old));
+            *self.fstab.lock().unwrap() = Some((new, backups));
+        }
+        Ok(Response {
+            ok: true,
+            dry_run: req.dry_run,
+            plan,
+            result: json!({"summary": "update /etc/fstab (demo, in memory)", "output": detail}),
+            ..Default::default()
+        })
+    }
+
     fn answer(&self, req: &Request) -> Result<Response, HelperError> {
+        let bad = |msg: String| HelperError {
+            code: CODE_BAD_REQUEST.into(),
+            msg,
+            plan: vec![],
+        };
+        match req.op.as_str() {
+            OP_FSTAB_WRITE => {
+                let p: FstabWriteParams =
+                    serde_json::from_value(req.params.clone()).map_err(|e| bad(e.to_string()))?;
+                let pv = self.fstab_preview(&p.doc);
+                if let Some(i) = pv.issues.iter().find(|i| i.level == "error") {
+                    return Err(bad(format!(
+                        "fstab has errors; fix them first:\n{}",
+                        i.message
+                    )));
+                }
+                let plan = pv
+                    .create_dirs
+                    .iter()
+                    .map(|d| format!("mkdir -p -m 0755 {d}"))
+                    .collect();
+                return self.fstab_write(req, pv.text, plan);
+            }
+            OP_FSTAB_ROLLBACK => {
+                let p: FstabRollbackParams =
+                    serde_json::from_value(req.params.clone()).map_err(|e| bad(e.to_string()))?;
+                let (_, backups) = self.fstab_text();
+                let Some((_, text)) = backups.into_iter().find(|(n, _)| *n == p.name) else {
+                    return Err(bad(format!("backup {} does not exist", p.name)));
+                };
+                return self.fstab_write(req, text, vec![]);
+            }
+            _ => {}
+        }
         let mut resp = Response {
             ok: true,
             ..Default::default()
@@ -291,6 +467,49 @@ impl Demo {
                 {"mountpoint": "/mnt/cache", "parent": "/", "parent_source": "/dev/mapper/pve-root", "files": 57, "bytes": 5798205849u64, "samples": [{"name": "incomplete", "bytes": 5798205849u64}]}
             ]),
             OP_AUDIT_LIST => serde_json::to_value(&*self.audit.lock().unwrap()).unwrap(),
+            OP_FSTAB_READ => {
+                let (text, backups) = self.fstab_text();
+                let doc = fstab::parse(&text);
+                let (devices, issues) = self.fstab_issues(&doc);
+                serde_json::to_value(FstabState {
+                    path: "/etc/fstab".into(),
+                    sha256: fstab::sha256_hex(&text),
+                    text,
+                    doc,
+                    issues,
+                    devices,
+                    backups: backups
+                        .iter()
+                        .map(|(n, t)| FstabBackup {
+                            name: n.clone(),
+                            time: Utc::now(),
+                            size: t.len() as u64,
+                        })
+                        .collect(),
+                    backup_dir: "/var/lib/fsview-helper/backups".into(),
+                    writes_enabled: true,
+                })
+                .unwrap()
+            }
+            OP_FSTAB_PREVIEW => {
+                let p: FstabPreviewParams =
+                    serde_json::from_value(req.params.clone()).map_err(|e| bad(e.to_string()))?;
+                serde_json::to_value(self.fstab_preview(&p.doc)).unwrap()
+            }
+            OP_FSTAB_BACKUP => {
+                let name = req.params["name"].as_str().unwrap_or("");
+                let (cur, backups) = self.fstab_text();
+                let Some((_, text)) = backups.iter().find(|(n, _)| n == name) else {
+                    return Err(bad(format!("backup {name} does not exist")));
+                };
+                serde_json::to_value(FstabBackupView {
+                    name: name.into(),
+                    diff: fstab::diff(&cur, text),
+                    text: text.clone(),
+                    base_sha256: fstab::sha256_hex(&cur),
+                })
+                .unwrap()
+            }
             _ => {
                 return Err(HelperError {
                     code: CODE_UNKNOWN_OP.into(),
@@ -337,6 +556,7 @@ fn main() {
         Arc::new(Demo {
             dir: fixtures.into(),
             audit: Mutex::new(vec![]),
+            fstab: Mutex::new(None),
         }),
     );
     println!("demo UI on http://{listen}  (login demo / demo-password)");

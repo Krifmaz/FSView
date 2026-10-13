@@ -25,4 +25,5 @@ if [ "$PURGE" = 1 ]; then
   echo "FSView removed, including configuration, data and audit log."
 else
   echo "FSView removed. Kept /etc/fsview, /var/lib/fsview and /var/log/fsview (use --purge to delete)."
+  echo "fstab backups stay in /var/lib/fsview-helper/backups either way."
 fi

@@ -10,6 +10,7 @@ pub mod auth;
 pub mod bootcheck;
 pub mod config;
 pub mod events;
+pub mod fstab;
 pub mod helper;
 pub mod helperclient;
 pub mod inventory;

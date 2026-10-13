@@ -4,9 +4,9 @@ Self-hosted web app for disks, filesystems and storage pools on Proxmox VE 9 / D
 
 Written in Rust (axum + tokio backend, no `unsafe` code) with a React + TypeScript UI embedded in the single binary.
 
-**Status: phase 1 (read-only foundation).** Overview, SMART health, kernel disk events, boot check, login, and the privilege-separated root helper. Later phases add the fstab editor, mount/format, mergerfs, RAID/ZFS/SnapRAID wizards, notifications and multi-host.
+**Status: phase 2 (fstab editor).** Phase 1 delivered the read-only foundation: overview, SMART health, kernel disk events, boot check, login and the privilege-separated root helper. Later phases add mount/unmount and format, mergerfs, RAID/ZFS/SnapRAID wizards, notifications and multi-host.
 
-## Features (phase 1)
+## Features
 
 - **Overview**: every disk with model, serial, size, transport (SATA/SAS/NVMe/USB, plus "SATA via SAS" for bridged disks), controller (PCI address, driver, name), expander, enclosure slot (kernel `ses` driver / SAS bay ID), partitions, LVM/md children, filesystem type, label, UUID, mountpoints and usage. Protected system disks are marked.
 - **Health**: `smartctl -j` for ATA, SCSI and NVMe. SATA disks behind SAS bridges are retried with `-d sat` automatically. Polling uses `-n standby`, so it never wakes sleeping disks. Shows attributes, temperature vs. the drive's trip point, power-on hours, reallocated/pending sectors, the self-test log, and short/long/abort self-tests. Alert thresholds are configurable.
@@ -14,6 +14,11 @@ Written in Rust (axum + tokio backend, no `unsafe` code) with a React + TypeScri
 - **Boot check**: for the current boot, every fstab entry is marked ok, failed, late or skipped, using systemd unit timings, systemd timeout messages and kernel disk-attach times. It also flags mergerfs pools whose branches did not mount, and lists disks that appeared after their mount timeout.
 - **Hidden data**: finds files stored underneath active mountpoints, written while a disk was not mounted. They use space (often on the root disk) but are invisible. The root disk is checked every 6 hours, other disks on request. The scan runs read-only in a private mount namespace.
 - **Enclosures**: SES shelves via `sg_ses`, showing power supplies, fans, temperatures, voltages and the fault LED.
+- **fstab editor**: form-based editing of `/etc/fstab` that keeps comments and untouched lines as they are. "Add from disk" fills in `UUID=`, a mountpoint and safe options. Validation runs live:
+  - errors block saving: the device does not exist (unless `nofail`), bad or duplicate mountpoints, unparsable options or durations;
+  - warnings: a short `x-systemd.device-timeout` on spinning or shelf disks, `/dev/sdX` names, missing `nofail`, mergerfs pools without `x-systemd.requires-mounts-for`, a filesystem type mismatch.
+
+  Every change runs `findmnt --verify` on a scratch copy and shows a diff. The dry-run plan appears in the confirm dialog. On save, the helper makes a timestamped backup in `/var/lib/fsview-helper/backups` (newest 50 kept), creates missing mountpoints under `/mnt`, `/media` and similar, replaces the file atomically (refusing if someone else changed it meanwhile), then runs `systemctl daemon-reload`. Restoring a backup takes one click and is itself backed up first. Mounting comes in phase 3; until then use `mount -a`.
 - **Audit log**: every write attempt is recorded by the helper, including dry runs and rejected attempts.
 
 ## Install

@@ -55,6 +55,14 @@ impl HelperApi for FakeHelper {
                     Some("sdb") => json!({"device": "sdb", "devtype": "sat", "exit_status": 0, "standby": false, "raw": serde_json::from_slice::<Value>(&fx("smart_sdb_sat_synthetic.json")).unwrap()}),
                     _ => return e(CODE_EXEC_FAILED, "no data"),
                 },
+                OP_FSTAB_WRITE | OP_FSTAB_ROLLBACK => {
+                    if !writes {
+                        return e(CODE_WRITES_OFF, "writes disabled");
+                    }
+                    resp.dry_run = req.dry_run;
+                    resp.plan = vec!["write /etc/fstab (10 bytes, atomic replace)".into()];
+                    json!({"summary": "update /etc/fstab", "output": "+x\n"})
+                }
                 OP_SMART_SELFTEST => {
                     if !writes {
                         return e(CODE_WRITES_OFF, "writes disabled");
@@ -431,4 +439,37 @@ async fn hidden_scan() {
     );
     let (_, _, b) = send(&t, "GET", "/api/overview", "", Some(&tok), false, LAN).await;
     assert!(b.contains("/mnt/drivepool"));
+}
+
+#[tokio::test]
+async fn fstab_apply_forwards_to_helper() {
+    let t = setup();
+    let tok = login(&t).await;
+    *t.helper.writes.lock().unwrap() = true;
+    let doc = r##"{"lines":[{"kind":"comment","text":"# x"},{"kind":"entry","raw":"","entry":{"spec":"UUID=1","file":"/mnt/a","vfstype":"ext4","options":"defaults,nofail","freq":0,"passno":2}}]}"##;
+    let body = format!(r#"{{"doc":{doc},"base_sha256":"abc","confirmed":true}}"#);
+    let (s, _, b) = send(&t, "POST", "/api/fstab/apply", &body, Some(&tok), true, LAN).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let last = t.helper.reqs.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(last.op, OP_FSTAB_WRITE);
+    assert_eq!((last.actor.as_str(), last.confirmed), ("admin", true));
+    assert_eq!(last.params["doc"]["lines"][1]["entry"]["file"], "/mnt/a");
+    assert_eq!(last.params["base_sha256"], "abc");
+
+    // Unknown fields (e.g. smuggled helper flags) are rejected.
+    let body = format!(r#"{{"doc":{doc},"base_sha256":"abc","confirm_text":"sda"}}"#);
+    let (s, _, _) = send(&t, "POST", "/api/fstab/apply", &body, Some(&tok), true, LAN).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // CSRF header required.
+    let (s, _, _) = send(
+        &t,
+        "POST",
+        "/api/fstab/rollback",
+        r#"{"name":"fstab.20261013-120000","base_sha256":"abc"}"#,
+        Some(&tok),
+        false,
+        LAN,
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
 }

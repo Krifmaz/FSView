@@ -378,6 +378,11 @@ impl App {
         Ok(rep)
     }
 
+    /// Drops the cached boot report (fstab changed).
+    pub async fn invalidate_boot(&self) {
+        *self.boot.lock().await = None;
+    }
+
     /// Checks the root filesystem for hidden data 30 s after start, then
     /// every 6 hours. Full scans (may wake sleeping disks) run on request.
     async fn hidden_loop(self: Arc<Self>) {

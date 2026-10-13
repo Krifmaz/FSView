@@ -343,3 +343,204 @@ async fn socket_peer_credentials() {
         h.await.unwrap();
     }
 }
+
+// ---- fstab editor ----
+
+struct FsT {
+    t: T,
+    fstab: std::path::PathBuf,
+    backups: std::path::PathBuf,
+    _d: tempfile::TempDir,
+}
+
+const FSTAB0: &str =
+    "# test fstab\nUUID=c69cfb3b-4f39-449a-bb21-cd2e4ba23d49 /tmp ext4 defaults,nofail 0 2\n";
+
+fn fstab_server(writes: bool) -> FsT {
+    let d = tempfile::tempdir().unwrap();
+    let fstab = d.path().join("fstab");
+    std::fs::write(&fstab, FSTAB0).unwrap();
+    let verify_key = format!(
+        "findmnt --verify --verbose --tab-file {}",
+        d.path().join("fstab.verify").display()
+    );
+    let lsblk_key = format!("lsblk {}", crate::inventory::LSBLK_ARGS.join(" "));
+    let mut t = server(
+        writes,
+        vec![
+            (lsblk_key.as_str(), Fake::ok(&td("lsblk.json"))),
+            (
+                "findmnt -J -o TARGET,SOURCE,FSTYPE,OPTIONS",
+                Fake::ok(&td("findmnt.json")),
+            ),
+            (
+                verify_key.as_str(),
+                Fake::ok(b"0 parse errors, 0 errors, 0 warnings\n"),
+            ),
+            ("systemctl daemon-reload", Fake::ok(b"")),
+        ],
+    );
+    let mut cfg = t.srv.cfg.clone();
+    cfg.fstab_path = fstab.clone();
+    cfg.backup_dir = d.path().join("backups");
+    cfg.scratch_dir = d.path().into();
+    let audit = AuditLog::open(d.path().join("audit.log"), None).unwrap();
+    t.srv = Server::new(cfg, t.fake.clone(), Some(audit));
+    FsT {
+        t,
+        backups: d.path().join("backups"),
+        fstab,
+        _d: d,
+    }
+}
+
+fn edited_doc(state: &FstabState, options: &str, file: &str) -> crate::fstab::Doc {
+    let mut doc = state.doc.clone();
+    for l in doc.lines.iter_mut() {
+        if let crate::fstab::Line::Entry { entry, .. } = l {
+            entry.options = options.into();
+            entry.file = file.into();
+        }
+    }
+    doc
+}
+
+fn write_req(doc: &crate::fstab::Doc, sha: &str, dry: bool, confirmed: bool) -> Request {
+    let mut r = req(OP_FSTAB_WRITE, json!({"doc": doc, "base_sha256": sha}));
+    r.dry_run = dry;
+    r.confirmed = confirmed;
+    r
+}
+
+#[test]
+fn fstab_write_and_rollback() {
+    let f = fstab_server(true);
+    let r = f.t.srv.handle(&req(OP_FSTAB_READ, json!(null)), 1);
+    assert!(r.ok, "{r:?}");
+    let st: FstabState = serde_json::from_value(r.result).unwrap();
+    assert_eq!(st.text, FSTAB0);
+    assert!(
+        st.issues.iter().all(|i| i.level != "error"),
+        "{:?}",
+        st.issues
+    );
+    let doc = edited_doc(&st, "defaults,nofail,x-systemd.device-timeout=5min", "/tmp");
+
+    // Preview shows the diff and passes.
+    let r =
+        f.t.srv
+            .handle(&req(OP_FSTAB_PREVIEW, json!({ "doc": doc })), 1);
+    let pv: FstabPreview = serde_json::from_value(r.result).unwrap();
+    assert!(pv.can_apply && pv.changed, "{pv:?}");
+    assert_eq!(pv.diff.iter().filter(|l| l.op != " ").count(), 2);
+
+    // Stale base is refused.
+    let r = f.t.srv.handle(&write_req(&doc, "deadbeef", false, true), 1);
+    assert_eq!(r.code, CODE_BAD_REQUEST);
+    assert!(r.error.contains("changed since"), "{}", r.error);
+
+    // Dry run changes nothing and shows the plan.
+    let r = f.t.srv.handle(&write_req(&doc, &st.sha256, true, false), 1);
+    assert!(r.ok && r.dry_run, "{r:?}");
+    assert!(r.plan[0].starts_with("cp --preserve=mode"), "{:?}", r.plan);
+    assert!(r.plan.iter().any(|p| p.starts_with("write ")));
+    assert!(r.result["output"]
+        .as_str()
+        .unwrap()
+        .contains("+UUID=c69cfb3b"));
+    assert_eq!(std::fs::read_to_string(&f.fstab).unwrap(), FSTAB0);
+    assert!(!f.backups.exists());
+
+    // Unconfirmed is refused.
+    let r =
+        f.t.srv
+            .handle(&write_req(&doc, &st.sha256, false, false), 1);
+    assert_eq!(r.code, CODE_NEED_CONFIRM);
+
+    // Confirmed: backup, then atomic write.
+    let r = f.t.srv.handle(&write_req(&doc, &st.sha256, false, true), 1);
+    assert!(r.ok, "{r:?}");
+    let new = std::fs::read_to_string(&f.fstab).unwrap();
+    assert!(new.contains("x-systemd.device-timeout=5min"), "{new}");
+    assert!(new.starts_with("# test fstab\n"), "comment kept");
+    let backups: Vec<_> = std::fs::read_dir(&f.backups).unwrap().flatten().collect();
+    assert_eq!(backups.len(), 1);
+    assert_eq!(std::fs::read_to_string(backups[0].path()).unwrap(), FSTAB0);
+    let a = f.t.audit();
+    let last = &a[0];
+    assert_eq!(last.result, "ok");
+    assert_eq!(last.actor, "admin");
+    assert!(last.output.contains("-UUID=c69cfb3b"), "{}", last.output);
+
+    // Same document again: nothing to apply.
+    let r = f.t.srv.handle(&req(OP_FSTAB_READ, json!(null)), 1);
+    let st2: FstabState = serde_json::from_value(r.result).unwrap();
+    assert_eq!(st2.backups.len(), 1);
+    let r =
+        f.t.srv
+            .handle(&write_req(&st2.doc, &st2.sha256, false, true), 1);
+    assert!(r.error.contains("no changes"), "{r:?}");
+
+    // Backup view and rollback.
+    let name = st2.backups[0].name.clone();
+    let r =
+        f.t.srv
+            .handle(&req(OP_FSTAB_BACKUP, json!({ "name": name })), 1);
+    let bv: FstabBackupView = serde_json::from_value(r.result).unwrap();
+    assert_eq!(bv.text, FSTAB0);
+    for bad_name in ["../fstab", "fstab.x", "/etc/fstab"] {
+        let r =
+            f.t.srv
+                .handle(&req(OP_FSTAB_BACKUP, json!({ "name": bad_name })), 1);
+        assert_eq!(r.code, CODE_BAD_REQUEST, "{bad_name}");
+    }
+    let mut rb = req(
+        OP_FSTAB_ROLLBACK,
+        json!({"name": name, "base_sha256": st2.sha256}),
+    );
+    rb.confirmed = true;
+    let r = f.t.srv.handle(&rb, 1);
+    assert!(r.ok, "{r:?}");
+    assert_eq!(std::fs::read_to_string(&f.fstab).unwrap(), FSTAB0);
+    assert_eq!(
+        std::fs::read_dir(&f.backups).unwrap().count(),
+        2,
+        "rollback backs up the current file too"
+    );
+}
+
+#[test]
+fn fstab_write_rejects_errors_and_disabled_writes() {
+    let f = fstab_server(true);
+    let r = f.t.srv.handle(&req(OP_FSTAB_READ, json!(null)), 1);
+    let st: FstabState = serde_json::from_value(r.result).unwrap();
+    let doc = edited_doc(&st, "defaults,nofail", "relative/path");
+    let r = f.t.srv.handle(&write_req(&doc, &st.sha256, false, true), 1);
+    assert_eq!(r.code, CODE_BAD_REQUEST);
+    assert!(r.error.contains("absolute path"), "{}", r.error);
+    assert_eq!(std::fs::read_to_string(&f.fstab).unwrap(), FSTAB0);
+    assert_eq!(f.t.audit()[0].result, "rejected");
+
+    let f = fstab_server(false);
+    let doc = edited_doc(&st, "defaults,nofail,noatime", "/tmp");
+    let r = f.t.srv.handle(&write_req(&doc, &st.sha256, false, true), 1);
+    assert_eq!(r.code, CODE_WRITES_OFF);
+    assert_eq!(std::fs::read_to_string(&f.fstab).unwrap(), FSTAB0);
+    // Reads still work with writes disabled.
+    assert!(f.t.srv.handle(&req(OP_FSTAB_READ, json!(null)), 1).ok);
+}
+
+#[test]
+fn fstab_write_detects_concurrent_change() {
+    let f = fstab_server(true);
+    let r = f.t.srv.handle(&req(OP_FSTAB_READ, json!(null)), 1);
+    let st: FstabState = serde_json::from_value(r.result).unwrap();
+    std::fs::write(&f.fstab, "# someone else\n").unwrap();
+    let doc = edited_doc(&st, "defaults,nofail,noatime", "/tmp");
+    let r = f.t.srv.handle(&write_req(&doc, &st.sha256, false, true), 1);
+    assert_eq!(r.code, CODE_BAD_REQUEST);
+    assert_eq!(
+        std::fs::read_to_string(&f.fstab).unwrap(),
+        "# someone else\n"
+    );
+}

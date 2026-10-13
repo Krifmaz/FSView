@@ -5,6 +5,7 @@
 //! process sends.
 
 mod audit;
+mod fstabops;
 mod hidden;
 mod ops;
 mod smart;
@@ -35,6 +36,8 @@ pub struct Config {
     pub writes_enabled: bool,
     pub include_loop: bool,
     pub fstab_path: PathBuf,
+    /// Where backups of fstab are kept (root only).
+    pub backup_dir: PathBuf,
     /// Default /sys.
     pub sys_root: PathBuf,
     /// Directory for temporary mountpoints (default /tmp).
@@ -51,6 +54,7 @@ impl Default for Config {
             writes_enabled: false,
             include_loop: false,
             fstab_path: "/etc/fstab".into(),
+            backup_dir: "/var/lib/fsview-helper/backups".into(),
             sys_root: "/sys".into(),
             scratch_dir: std::env::temp_dir(),
             version: crate::VERSION.into(),

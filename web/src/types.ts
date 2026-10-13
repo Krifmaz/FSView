@@ -342,3 +342,101 @@ export interface HiddenView {
   checked_at: string | null;
   error?: string;
 }
+
+// ---- fstab editor ----
+
+export interface FsEntry {
+  spec: string;
+  file: string;
+  vfstype: string;
+  options: string;
+  freq: number;
+  passno: number;
+}
+
+export type FstabLine =
+  | { kind: "comment"; text: string }
+  | { kind: "invalid"; text: string }
+  | { kind: "entry"; raw: string; entry: FsEntry };
+
+export interface FstabDoc {
+  lines: FstabLine[];
+}
+
+export interface FstabIssue {
+  level: "error" | "warning";
+  line?: number;
+  field?: string;
+  message: string;
+}
+
+export interface FstabDevice {
+  path: string;
+  name: string;
+  disk: string;
+  fstype: string;
+  uuid?: string;
+  label?: string;
+  partuuid?: string;
+  partlabel?: string;
+  size_bytes: number;
+  rotational: boolean;
+  shelf: boolean;
+  protected: boolean;
+  mountpoints?: string[];
+}
+
+export interface FstabBackup {
+  name: string;
+  time: string;
+  size: number;
+}
+
+export interface FstabState {
+  path: string;
+  text: string;
+  sha256: string;
+  doc: FstabDoc;
+  issues: FstabIssue[];
+  devices: FstabDevice[];
+  backups: FstabBackup[];
+  backup_dir: string;
+  writes_enabled: boolean;
+}
+
+export interface DiffLine {
+  op: " " | "+" | "-";
+  text: string;
+}
+
+export interface FstabVerify {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  ignored?: string[];
+}
+
+export interface FstabPreview {
+  base_sha256: string;
+  text: string;
+  changed: boolean;
+  diff: DiffLine[];
+  issues: FstabIssue[];
+  verify: FstabVerify;
+  create_dirs: string[];
+  can_apply: boolean;
+}
+
+export interface FstabBackupView {
+  name: string;
+  text: string;
+  base_sha256: string;
+  diff: DiffLine[];
+}
+
+export interface WriteResult {
+  ok: boolean;
+  dry_run: boolean;
+  plan: string[];
+  result?: { summary?: string; output?: string };
+}

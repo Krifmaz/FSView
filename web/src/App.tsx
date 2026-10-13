@@ -7,6 +7,7 @@ import DiskPage from "./pages/Disk";
 import HealthPage from "./pages/Health";
 import EventsPage from "./pages/Events";
 import BootPage from "./pages/Boot";
+import FstabPage from "./pages/Fstab";
 import AuditPage from "./pages/Audit";
 import SettingsPage from "./pages/Settings";
 
@@ -15,6 +16,7 @@ const NAV = [
   { id: "health", label: "Health", ico: "♥" },
   { id: "events", label: "Events", ico: "⚡" },
   { id: "boot", label: "Boot check", short: "Boot", ico: "⏻" },
+  { id: "fstab", label: "fstab", ico: "✎" },
   { id: "audit", label: "Audit log", short: "Audit", ico: "☰" },
   { id: "settings", label: "Settings", ico: "⚙" },
 ];
@@ -62,6 +64,9 @@ export default function App() {
       break;
     case "boot":
       content = <BootPage />;
+      break;
+    case "fstab":
+      content = <FstabPage />;
       break;
     case "audit":
       content = <AuditPage />;

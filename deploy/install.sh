@@ -127,5 +127,5 @@ if [ -n "$FIRST_PW" ]; then
   echo "  (shown once; change it under Settings, or: runuser -u fsview -- fsview user passwd admin)"
 fi
 echo
-echo "Read-only mode is on. To allow write operations (SMART self-tests, later mount/format/pools):"
+echo "Read-only mode is on. To allow write operations (SMART self-tests, fstab edits):"
 echo "  set writes_enabled = true in $ETC/helper.conf, then: systemctl restart fsview-helper"

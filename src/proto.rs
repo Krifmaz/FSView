@@ -12,6 +12,11 @@ pub const OP_JOURNAL_KERNEL: &str = "journal.kernel";
 pub const OP_BOOT_COLLECT: &str = "boot.collect";
 pub const OP_AUDIT_LIST: &str = "audit.list";
 pub const OP_HIDDEN_SCAN: &str = "hidden.scan";
+pub const OP_FSTAB_READ: &str = "fstab.read";
+pub const OP_FSTAB_PREVIEW: &str = "fstab.preview";
+pub const OP_FSTAB_BACKUP: &str = "fstab.backup";
+pub const OP_FSTAB_WRITE: &str = "fstab.write";
+pub const OP_FSTAB_ROLLBACK: &str = "fstab.rollback";
 
 /// Upper bound for requests and responses on the socket.
 pub const MAX_MESSAGE: usize = 32 << 20;
@@ -169,4 +174,78 @@ pub struct HiddenResult {
     pub samples: Vec<HiddenSample>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub error: String,
+}
+
+// ---- fstab editor ----
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct FstabBackup {
+    pub name: String,
+    pub time: chrono::DateTime<chrono::Utc>,
+    pub size: u64,
+}
+
+/// Current /etc/fstab with everything the editor needs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FstabState {
+    pub path: String,
+    pub text: String,
+    pub sha256: String,
+    pub doc: crate::fstab::Doc,
+    pub issues: Vec<crate::fstab::Issue>,
+    pub devices: Vec<crate::fstab::Device>,
+    pub backups: Vec<FstabBackup>,
+    pub backup_dir: String,
+    pub writes_enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FstabPreviewParams {
+    pub doc: crate::fstab::Doc,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FstabPreview {
+    /// sha256 of the file on disk the preview was made against.
+    pub base_sha256: String,
+    pub text: String,
+    pub changed: bool,
+    pub diff: Vec<crate::fstab::DiffLine>,
+    pub issues: Vec<crate::fstab::Issue>,
+    pub verify: crate::fstab::Verify,
+    /// Mountpoint directories that will be created.
+    pub create_dirs: Vec<String>,
+    /// No errors from validation or findmnt --verify.
+    pub can_apply: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FstabWriteParams {
+    pub doc: crate::fstab::Doc,
+    /// Must match the file on disk (protects against concurrent edits).
+    pub base_sha256: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FstabBackupParams {
+    pub name: String,
+}
+
+/// A backup and how restoring it would change the current file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FstabBackupView {
+    pub name: String,
+    pub text: String,
+    pub base_sha256: String,
+    pub diff: Vec<crate::fstab::DiffLine>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FstabRollbackParams {
+    pub name: String,
+    pub base_sha256: String,
 }

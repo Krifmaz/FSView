@@ -54,6 +54,11 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/hidden", get(hidden))
         .route("/api/hidden/scan", post(hidden_scan))
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/fstab", get(fstab_get))
+        .route("/api/fstab/preview", post(fstab_preview))
+        .route("/api/fstab/apply", post(fstab_apply))
+        .route("/api/fstab/backups/{name}", get(fstab_backup))
+        .route("/api/fstab/rollback", post(fstab_rollback))
         .fallback(|| async { err(StatusCode::NOT_FOUND, "not_found", "no such endpoint") })
         .layer(middleware::from_fn(csrf));
     Router::new()
@@ -716,6 +721,123 @@ async fn hidden(State(app): AppState, _u: User) -> Response {
 async fn hidden_scan(State(app): AppState, _u: User, Query(q): Query<FreshQ>) -> Response {
     app.scan_hidden(q.all == "1").await;
     ok(app.hidden_snapshot())
+}
+
+// ---- fstab editor ----
+
+async fn fstab_get(State(app): AppState, _u: User) -> Response {
+    let req = Request {
+        op: OP_FSTAB_READ.into(),
+        ..Default::default()
+    };
+    match call_as::<FstabState>(&*app.helper, req).await {
+        Ok((v, _)) => ok(v),
+        Err(e) => helper_err(e),
+    }
+}
+
+async fn fstab_preview(
+    State(app): AppState,
+    _u: User,
+    JsonBody(b): JsonBody<FstabPreviewParams>,
+) -> Response {
+    let req = Request {
+        op: OP_FSTAB_PREVIEW.into(),
+        params: params(&b),
+        ..Default::default()
+    };
+    match call_as::<FstabPreview>(&*app.helper, req).await {
+        Ok((v, _)) => ok(v),
+        Err(e) => helper_err(e),
+    }
+}
+
+async fn fstab_backup(State(app): AppState, _u: User, Path(name): Path<String>) -> Response {
+    let req = Request {
+        op: OP_FSTAB_BACKUP.into(),
+        params: params(&FstabBackupParams { name }),
+        ..Default::default()
+    };
+    match call_as::<FstabBackupView>(&*app.helper, req).await {
+        Ok((v, _)) => ok(v),
+        Err(e) => helper_err(e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FstabApplyBody {
+    doc: crate::fstab::Doc,
+    base_sha256: String,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    confirmed: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FstabRollbackBody {
+    name: String,
+    base_sha256: String,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    confirmed: bool,
+}
+
+async fn fstab_write(app: &App, req: Request) -> Response {
+    match app.helper.call(req).await {
+        Ok(resp) => {
+            if !resp.dry_run {
+                app.invalidate_boot().await;
+            }
+            ok(
+                json!({"ok": true, "dry_run": resp.dry_run, "plan": resp.plan, "result": resp.result}),
+            )
+        }
+        Err(e) => helper_err(e),
+    }
+}
+
+async fn fstab_apply(
+    State(app): AppState,
+    User(u, ip): User,
+    JsonBody(b): JsonBody<FstabApplyBody>,
+) -> Response {
+    let req = Request {
+        op: OP_FSTAB_WRITE.into(),
+        actor: u,
+        client_ip: ip.to_string(),
+        dry_run: b.dry_run,
+        confirmed: b.confirmed,
+        params: params(&FstabWriteParams {
+            doc: b.doc,
+            base_sha256: b.base_sha256,
+        }),
+        ..Default::default()
+    };
+    fstab_write(&app, req).await
+}
+
+async fn fstab_rollback(
+    State(app): AppState,
+    User(u, ip): User,
+    JsonBody(b): JsonBody<FstabRollbackBody>,
+) -> Response {
+    let req = Request {
+        op: OP_FSTAB_ROLLBACK.into(),
+        actor: u,
+        client_ip: ip.to_string(),
+        dry_run: b.dry_run,
+        confirmed: b.confirmed,
+        params: params(&FstabRollbackParams {
+            name: b.name,
+            base_sha256: b.base_sha256,
+        }),
+        ..Default::default()
+    };
+    fstab_write(&app, req).await
 }
 
 async fn get_settings(State(app): AppState, _u: User) -> Response {

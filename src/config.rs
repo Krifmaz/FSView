@@ -145,6 +145,7 @@ pub struct Helper {
     pub writes_enabled: bool,
     pub audit_log: String,
     pub include_loop: bool,
+    pub backup_dir: String,
 }
 
 pub fn load_helper(path: &Path) -> Result<Helper, String> {
@@ -155,6 +156,7 @@ pub fn load_helper(path: &Path) -> Result<Helper, String> {
         writes_enabled: v.boolean("writes_enabled", false)?,
         audit_log: v.string("audit_log", "/var/log/fsview/audit.log"),
         include_loop: v.boolean("include_loop_devices", false)?,
+        backup_dir: v.string("backup_dir", "/var/lib/fsview-helper/backups"),
     })
 }
 

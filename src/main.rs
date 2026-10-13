@@ -165,6 +165,7 @@ fn run_helper(path: &Path) -> Result<(), String> {
         writes_enabled: cfg.writes_enabled,
         include_loop: cfg.include_loop,
         scratch_dir: scratch,
+        backup_dir: PathBuf::from(&cfg.backup_dir),
         version: VERSION.into(),
         ..Default::default()
     };

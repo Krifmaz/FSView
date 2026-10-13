@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use regex::Regex;
@@ -20,33 +21,72 @@ enum Class {
 }
 
 /// What a write operation intends to do. `prepare` validates everything;
-/// execution only runs `commands`.
+/// execution only performs `actions`, in order, stopping at the first
+/// failure.
 pub(super) struct Plan {
-    targets: Vec<String>,
-    commands: Vec<Vec<String>>,
-    summary: String,
+    pub(super) targets: Vec<String>,
+    pub(super) actions: Vec<Action>,
+    pub(super) summary: String,
+    /// Extra text for the audit log and the response (e.g. a diff).
+    pub(super) detail: String,
+}
+
+/// One step of a write operation.
+pub(super) enum Action {
+    /// Run a command (argv, no shell).
+    Run(Vec<String>),
+    /// Copy `src` to the new file `dst` (fails if `dst` exists).
+    Backup { src: PathBuf, dst: PathBuf },
+    /// Create a directory (and missing parents) with mode 0755.
+    Mkdir(PathBuf),
+    /// Atomically replace `path` with `content`, but only if its current
+    /// content still hashes to `expect_sha256`.
+    WriteFile {
+        path: PathBuf,
+        content: String,
+        expect_sha256: String,
+    },
+}
+
+impl Action {
+    pub(super) fn describe(&self) -> String {
+        match self {
+            Action::Run(c) => command_line(c),
+            Action::Backup { src, dst } => {
+                format!("cp --preserve=mode {} {}", src.display(), dst.display())
+            }
+            Action::Mkdir(p) => format!("mkdir -p -m 0755 {}", p.display()),
+            Action::WriteFile { path, content, .. } => format!(
+                "write {} ({} bytes, atomic replace)",
+                path.display(),
+                content.len()
+            ),
+        }
+    }
 }
 
 /// Operation failure: (error code, message).
 pub(super) type OpError = (&'static str, String);
 
-fn bad(msg: impl Into<String>) -> OpError {
+pub(super) fn bad(msg: impl Into<String>) -> OpError {
     (CODE_BAD_REQUEST, msg.into())
 }
-fn failed(msg: impl Into<String>) -> OpError {
+pub(super) fn failed(msg: impl Into<String>) -> OpError {
     (CODE_EXEC_FAILED, msg.into())
 }
 
 fn class_of(op: &str) -> Option<Class> {
     Some(match op {
         OP_STATUS | OP_INVENTORY | OP_SMART_GET | OP_JOURNAL_KERNEL | OP_BOOT_COLLECT
-        | OP_AUDIT_LIST | OP_HIDDEN_SCAN => Class::Read,
-        OP_SMART_SELFTEST => Class::Write,
+        | OP_AUDIT_LIST | OP_HIDDEN_SCAN | OP_FSTAB_READ | OP_FSTAB_PREVIEW | OP_FSTAB_BACKUP => {
+            Class::Read
+        }
+        OP_SMART_SELFTEST | OP_FSTAB_WRITE | OP_FSTAB_ROLLBACK => Class::Write,
         _ => return None,
     })
 }
 
-fn decode<T: DeserializeOwned + Default>(req: &Request) -> Result<T, OpError> {
+pub(super) fn decode<T: DeserializeOwned + Default>(req: &Request) -> Result<T, OpError> {
     if req.params.is_null() {
         return Ok(T::default());
     }
@@ -173,6 +213,15 @@ impl Server {
                     self.scan_hidden(!p.all).map_err(failed)?,
                 ))
             }
+            OP_FSTAB_READ => to(serde_json::to_value(self.fstab_read()?)),
+            OP_FSTAB_PREVIEW => {
+                let p: FstabPreviewParams = decode(req)?;
+                to(serde_json::to_value(self.fstab_preview(&p.doc)?))
+            }
+            OP_FSTAB_BACKUP => {
+                let p: FstabBackupParams = decode(req)?;
+                to(serde_json::to_value(self.fstab_backup_view(&p.name)?))
+            }
             _ => Err((CODE_UNKNOWN_OP, "unknown".into())),
         }
     }
@@ -208,6 +257,8 @@ impl Server {
     fn prepare(&self, req: &Request) -> Result<Plan, OpError> {
         match req.op.as_str() {
             OP_SMART_SELFTEST => self.prep_smart_selftest(req),
+            OP_FSTAB_WRITE => self.prep_fstab_write(req),
+            OP_FSTAB_ROLLBACK => self.prep_fstab_rollback(req),
             _ => Err((CODE_UNKNOWN_OP, "unknown".into())),
         }
     }
@@ -237,7 +288,7 @@ impl Server {
             Err((code, msg)) => return reject(&mut rec, code, msg),
         };
         rec.targets = plan.targets.clone();
-        rec.commands = plan.commands.iter().map(|c| command_line(c)).collect();
+        rec.commands = plan.actions.iter().map(Action::describe).collect();
 
         if class == Class::Destructive {
             let inv = match self.inventory() {
@@ -267,6 +318,7 @@ impl Server {
                 ok: true,
                 dry_run: true,
                 plan: rec.commands,
+                result: serde_json::json!({"summary": plan.summary, "output": plan.detail}),
                 ..Default::default()
             };
         }
@@ -278,18 +330,22 @@ impl Server {
             );
         }
 
-        let mut output = String::new();
-        for c in &plan.commands {
-            let args: Vec<&str> = c[1..].iter().map(String::as_str).collect();
-            let res = self.runner.run(&c[0], &args);
-            let err = match &res {
-                Ok(o) => {
-                    output.push_str(&String::from_utf8_lossy(&o.stdout));
-                    output.push_str(&String::from_utf8_lossy(&o.stderr));
-                    (o.code != 0 && !tolerated_exit(c, o.code))
-                        .then(|| format!("{} exited with status {}", c[0], o.code))
+        let mut output = plan.detail.clone();
+        for a in &plan.actions {
+            let err = match a {
+                Action::Run(c) => {
+                    let args: Vec<&str> = c[1..].iter().map(String::as_str).collect();
+                    match self.runner.run(&c[0], &args) {
+                        Ok(o) => {
+                            output.push_str(&String::from_utf8_lossy(&o.stdout));
+                            output.push_str(&String::from_utf8_lossy(&o.stderr));
+                            (o.code != 0 && !tolerated_exit(c, o.code))
+                                .then(|| format!("{} exited with status {}", c[0], o.code))
+                        }
+                        Err(e) => Some(e.to_string()),
+                    }
                 }
-                Err(e) => Some(e.to_string()),
+                other => super::fstabops::apply_file_action(other).err(),
             };
             if let Some(e) = err {
                 rec.result = "error".into();
@@ -341,8 +397,9 @@ impl Server {
         args.push(format!("/dev/{}", p.device));
         Ok(Plan {
             targets: vec![p.device.clone()],
-            commands: vec![args],
+            actions: vec![Action::Run(args)],
             summary: format!("SMART {} self-test on /dev/{}", p.test, p.device),
+            detail: String::new(),
         })
     }
 }

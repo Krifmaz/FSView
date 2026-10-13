@@ -160,6 +160,8 @@ fn start_helper(mut cfg: Config) -> Helper {
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
     cfg.socket = dir.path().join("helper.sock");
     cfg.scratch_dir = dir.path().into();
+    // Never write backups to the host's real backup directory.
+    cfg.backup_dir = dir.path().join("backups");
     let audit_path = dir.path().join("audit.log");
     let srv = Server::new(
         cfg.clone(),
@@ -429,4 +431,154 @@ fn hidden_data_under_mountpoint() {
         "scan leaked mounts into the host namespace"
     );
     drop(cm);
+}
+
+fn fstab_call(h: &Helper, op: &str, p: serde_json::Value, dry: bool) -> Response {
+    call(
+        h,
+        Request {
+            op: op.into(),
+            actor: "it".into(),
+            dry_run: dry,
+            confirmed: !dry,
+            params: p,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("{op}: {} {}", e.code, e.msg))
+}
+
+/// fstab editor end to end on a temporary fstab: real findmnt --verify,
+/// write with backup, mount from the written file, rollback. /etc/fstab
+/// is never touched.
+#[test]
+fn fstab_edit_apply_and_rollback() {
+    if !root() {
+        return;
+    }
+    let real_before = std::fs::read("/etc/fstab").ok();
+    let a = new_loop("fsvtest7");
+    let dir = tempfile::tempdir().unwrap();
+    let fstab_path = dir.path().join("fstab");
+    let original = "# fsview integration test\n";
+    std::fs::write(&fstab_path, original).unwrap();
+    let mp = format!("/mnt/fsview-it-{}", std::process::id());
+    let h = start_helper(Config {
+        allowed_uids: vec![0],
+        include_loop: true,
+        writes_enabled: true,
+        fstab_path: fstab_path.clone(),
+        version: "it".into(),
+        ..Default::default()
+    });
+
+    let st: FstabState =
+        serde_json::from_value(fstab_call(&h, OP_FSTAB_READ, serde_json::Value::Null, true).result)
+            .unwrap();
+    assert_eq!(st.text, original);
+    assert!(
+        st.devices.iter().any(|d| d.path == a.dev),
+        "{:?}",
+        st.devices
+    );
+
+    let mut doc = st.doc.clone();
+    doc.lines.push(fsview::fstab::Line::Entry {
+        raw: String::new(),
+        entry: fsview::fstab::FsEntry {
+            spec: a.dev.clone(),
+            file: mp.clone(),
+            vfstype: "ext4".into(),
+            options: "defaults,nofail".into(),
+            freq: 0,
+            passno: 2,
+        },
+    });
+    let pv: FstabPreview = serde_json::from_value(
+        fstab_call(
+            &h,
+            OP_FSTAB_PREVIEW,
+            serde_json::json!({ "doc": doc }),
+            true,
+        )
+        .result,
+    )
+    .unwrap();
+    assert!(pv.can_apply, "{pv:#?}");
+    assert_eq!(pv.create_dirs, vec![mp.clone()]);
+
+    let dry = fstab_call(
+        &h,
+        OP_FSTAB_WRITE,
+        serde_json::json!({"doc": doc, "base_sha256": st.sha256}),
+        true,
+    );
+    assert!(
+        dry.dry_run && dry.plan.iter().any(|p| p.contains(&mp)),
+        "{dry:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&fstab_path).unwrap(), original);
+
+    fstab_call(
+        &h,
+        OP_FSTAB_WRITE,
+        serde_json::json!({"doc": doc, "base_sha256": st.sha256}),
+        false,
+    );
+    let _cleanup = Rmdir(mp.clone());
+    let written = std::fs::read_to_string(&fstab_path).unwrap();
+    assert!(
+        written.starts_with(original) && written.contains(&mp),
+        "{written}"
+    );
+    assert!(Path::new(&mp).is_dir(), "mountpoint created");
+
+    // The written file is usable by mount(8).
+    run("mount", &["-T", fstab_path.to_str().unwrap(), &mp]);
+    let src = run("findmnt", &["-n", "-o", "SOURCE", &mp]);
+    run("umount", &[&mp]);
+    assert_eq!(src, a.dev);
+
+    let st2: FstabState =
+        serde_json::from_value(fstab_call(&h, OP_FSTAB_READ, serde_json::Value::Null, true).result)
+            .unwrap();
+    assert_eq!(st2.backups.len(), 1);
+    fstab_call(
+        &h,
+        OP_FSTAB_ROLLBACK,
+        serde_json::json!({"name": st2.backups[0].name, "base_sha256": st2.sha256}),
+        false,
+    );
+    assert_eq!(std::fs::read_to_string(&fstab_path).unwrap(), original);
+
+    let recs = AuditLog::open(&h.audit_path, None)
+        .unwrap()
+        .tail(10)
+        .unwrap();
+    let ops: Vec<(&str, &str)> = recs
+        .iter()
+        .map(|r| (r.op.as_str(), r.result.as_str()))
+        .collect();
+    assert_eq!(
+        ops,
+        vec![
+            (OP_FSTAB_ROLLBACK, "ok"),
+            (OP_FSTAB_WRITE, "ok"),
+            (OP_FSTAB_WRITE, "dry-run")
+        ]
+    );
+    assert_eq!(
+        std::fs::read("/etc/fstab").ok(),
+        real_before,
+        "/etc/fstab changed"
+    );
+}
+
+struct Rmdir(String);
+
+impl Drop for Rmdir {
+    fn drop(&mut self) {
+        let _ = Command::new("umount").args(["-l", &self.0]).status();
+        let _ = std::fs::remove_dir(&self.0);
+    }
 }

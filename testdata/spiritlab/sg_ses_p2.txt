@@ -1,0 +1,143 @@
+  NETAPP    DS424IOM6E        0172
+Enclosure reports this timestamp:
+    0.000 seconds since powerup or reset
+Enclosure Status diagnostic page
+  INVOP=0, INFO=0, NON-CRIT=0, CRIT=1, UNRECOV=1
+  generation code: 0x5
+  Status descriptor list:
+    Element type: Device slot, subenclosure id: 0 [ti=0]
+      Overall descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unsupported
+        Slot address: 0
+      Element 0 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Slot address: 0
+        App client bypassed A=0, Do not remove=0, Enc bypassed A=0
+      Element 1 descriptor:
+        Predicted failure=0, Disabled=0, Swap=1, status: OK
+        Slot address: 1
+      Element 9 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Not installed
+        Slot address: 9
+    Element type: Power supply, subenclosure id: 0 [ti=1]
+      Overall descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unsupported
+        Ident=0, Do not remove=0, DC overvoltage=0, DC undervoltage=0
+        DC overcurrent=0, Hot swap=0, Fail=0, Requested on=0, Off=0
+        Overtmp fail=0, Temperature warn=0, AC fail=0, DC fail=0
+      Element 0 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, Do not remove=0, DC overvoltage=0, DC undervoltage=0
+        DC overcurrent=0, Hot swap=0, Fail=0, Requested on=1, Off=0
+        Overtmp fail=0, Temperature warn=0, AC fail=0, DC fail=0
+      Element 1 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Critical
+        Ident=0, Do not remove=0, DC overvoltage=0, DC undervoltage=0
+        DC overcurrent=0, Hot swap=1, Fail=1, Requested on=1, Off=1
+        Overtmp fail=0, Temperature warn=0, AC fail=1, DC fail=1
+      Element 2 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Critical
+        Ident=0, Do not remove=0, DC overvoltage=0, DC undervoltage=0
+        DC overcurrent=0, Hot swap=1, Fail=1, Requested on=1, Off=1
+        Overtmp fail=0, Temperature warn=0, AC fail=1, DC fail=1
+      Element 3 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, Do not remove=0, DC overvoltage=0, DC undervoltage=0
+        DC overcurrent=0, Hot swap=0, Fail=0, Requested on=1, Off=0
+        Overtmp fail=0, Temperature warn=0, AC fail=0, DC fail=0
+    Element type: Cooling, subenclosure id: 0 [ti=2]
+      Overall descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unsupported
+        Ident=0, Do not remove=0, Hot swap=0, Fail=0, Requested on=0
+        Off=0, Actual speed=0 rpm, Fan stopped
+      Element 0 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, Do not remove=0, Hot swap=0, Fail=0, Requested on=1
+        Off=0, Actual speed=3100 rpm, Fan at lowest speed
+      Element 3 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, Do not remove=0, Hot swap=1, Fail=0, Requested on=1
+        Off=0, Actual speed=3050 rpm, Fan at lowest speed
+    Element type: Temperature sensor, subenclosure id: 0 [ti=3]
+      Overall descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unsupported
+        Ident=0, Fail=0, OT failure=0, OT warning=0, UT failure=0
+        UT warning=0
+        Temperature: <reserved>
+      Element 0 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, Fail=0, OT failure=0, OT warning=0, UT failure=0
+        UT warning=0
+        Temperature=22 C
+      Element 9 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, Fail=0, OT failure=0, OT warning=0, UT failure=0
+        UT warning=0
+        Temperature=37 C
+      Element 11 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Not installed
+        Ident=0, Fail=0, OT failure=0, OT warning=0, UT failure=0
+        UT warning=0
+        Temperature: <reserved>
+    Element type: Enclosure services controller electronics, subenclosure id: 0 [ti=4]
+      Overall descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unsupported
+        Ident=0, Fail=0, Do not remove=0, Report=0, Hot swap=0
+      Element 0 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, Fail=0, Do not remove=0, Report=1, Hot swap=0
+      Element 1 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Not installed
+        Ident=0, Fail=0, Do not remove=0, Report=0, Hot swap=0
+    Element type: Enclosure, subenclosure id: 0 [ti=6]
+      Overall descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unsupported
+        Ident=0, Time until power cycle=0, Failure indication=0
+        Warning indication=0, Requested power off duration=0
+        Failure requested=0, Warning requested=0
+      Element 0 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, Time until power cycle=0, Failure indication=1
+        Warning indication=0, Requested power off duration=0
+        Failure requested=0, Warning requested=0
+    Element type: Voltage sensor, subenclosure id: 0 [ti=7]
+      Overall descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unsupported
+        Ident=0, Fail=0,  Warn Over=0, Warn Under=0, Crit Over=0
+        Crit Under=0
+        Voltage: 0.00 Volts
+      Element 0 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, Fail=0,  Warn Over=0, Warn Under=0, Crit Over=0
+        Crit Under=0
+        Voltage: 5.03 Volts
+      Element 2 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unrecoverable
+        Ident=0, Fail=0,  Warn Over=0, Warn Under=0, Crit Over=0
+        Crit Under=0
+        Voltage: 0.00 Volts
+    Element type: Current sensor, subenclosure id: 0 [ti=8]
+      Overall descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unsupported
+        Ident=0, Fail=0, Warn Over=0, Crit Over=0
+        Current: 0.00 Amps
+      Element 1 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, Fail=0, Warn Over=0, Crit Over=0
+        Current: 3.94 Amps
+    Element type: SAS connector, subenclosure id: 0 [ti=9]
+      Overall descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unsupported
+        Ident=0, No information
+        Connector physical link=0x0, Mated=0, Fail=0, OC=0
+      Element 1 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Ident=0, QSFP+ receptacle (SFF-8436) [max 4 phys]
+        Connector physical link=0xff, Mated=0, Fail=0, OC=0
+    Element type: Vendor specific [0x83], subenclosure id: 0 [ti=10]
+      Overall descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: Unsupported
+        Vendor specific element type, status in hex: 00 00 00 00
+      Element 0 descriptor:
+        Predicted failure=0, Disabled=0, Swap=0, status: OK
+        Vendor specific element type, status in hex: 01 88 00 c0

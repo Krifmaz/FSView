@@ -61,6 +61,7 @@ func (h *demoHelper) inventory() inventory.Inventory {
 			d.Topology = inventory.Topology{HBA: "0000:01:00.0", HBAName: "Sandisk Corp PC SN530 NVMe SSD", HBADriver: "nvme", Port: "nvme0"}
 		}
 	}
+	els := inventory.ParseSESStatus(string(h.read("sg_ses_p2.txt")))
 	for _, s := range []int{10, 11, 12} {
 		comps = append(comps, inventory.EnclosureComponent{Name: fmt.Sprintf("Slot %02d", s), Slot: ip(s), Status: "Not Installed"})
 	}
@@ -71,7 +72,8 @@ func (h *demoHelper) inventory() inventory.Inventory {
 			{PCI: "0000:0c:00.0", Name: "Broadcom / LSI SAS2308 PCI-Express Fusion-MPT SAS-2", Driver: "mpt3sas", Hosts: []string{"host2"}, Disks: []string{"sda", "sdb", "sdc", "sdd", "sde", "sdf", "sdg", "sdh", "sdi"}},
 			{PCI: "0000:0e:00.0", Name: "Broadcom / LSI SAS2308 PCI-Express Fusion-MPT SAS-2", Driver: "mpt3sas", Hosts: []string{"host3"}},
 		},
-		Enclosures: []inventory.Enclosure{{ID: "2:0:0:0", Vendor: "LSI", Model: "SAS2X36", Components: comps}},
+		Enclosures: []inventory.Enclosure{{ID: "2:0:9:0", SGDevice: "sg9", Vendor: "NETAPP", Model: "DS424IOM6E", Components: comps,
+			Elements: els, Status: inventory.EnclosureLevel(els)}},
 	}
 }
 
@@ -141,6 +143,7 @@ func (h *demoHelper) Call(ctx context.Context, req *proto.Request, out any) (*pr
 		inv := h.inventory()
 		_ = inv
 		mounts, _ := inventory.ParseFindmnt(h.read("findmnt.json"))
+		mounts = append(mounts, inventory.Mount{Target: "/mnt/drivepool", Source: "/mnt/media1", FSType: "fuse.mergerfs"})
 		m1 := `dev-disk-by\x2duuid-c69cfb3b\x2d4f39\x2d449a\x2dbb21\x2dcd2e4ba23d49.device`
 		result = bootcheck.Data{
 			BootID: "bede039a4a1e4487bf8a27be5fb490e8", CollectedAt: time.Now().UTC(), Fstab: string(h.read("fstab")),

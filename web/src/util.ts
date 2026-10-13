@@ -50,7 +50,7 @@ export function diskFilesystems(d: Disk): { name: string; fstype?: string; label
   if (d.fstype) out.push({ name: d.name, fstype: d.fstype, label: d.label, mounts: d.mountpoints ?? [], usage: d.usage, uuid: d.uuid });
   const walk = (ns?: Node[]) => {
     for (const n of ns ?? []) {
-      if (n.fstype) out.push({ name: n.name, fstype: n.fstype, label: n.label, mounts: n.mountpoints ?? [], usage: n.usage, uuid: n.uuid });
+      if (n.fstype && !out.some((o) => o.name === n.name)) out.push({ name: n.name, fstype: n.fstype, label: n.label, mounts: n.mountpoints ?? [], usage: n.usage, uuid: n.uuid });
       walk(n.children);
     }
   };

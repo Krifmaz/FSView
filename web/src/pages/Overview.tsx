@@ -1,6 +1,6 @@
 import { api } from "../api";
 import { ErrorBox, Loading, ProtectedBadge, StatusBadge, Temp, UsageBar } from "../components";
-import type { Disk, Overview } from "../types";
+import type { BootReport, Disk, Enclosure, Overview } from "../types";
 import { diskFilesystems, fmtBytes, slotLabel, timeAgo, useFetch } from "../util";
 
 function go(d: Disk) {
@@ -32,8 +32,47 @@ function Filesystems({ d }: { d: Disk }) {
   );
 }
 
+const SHORT: Record<string, string> = {
+  "Power supply": "PSU",
+  Cooling: "Fan",
+  "Temperature sensor": "Temp",
+  "Voltage sensor": "Volt",
+  "Current sensor": "Current",
+  "Enclosure services controller electronics": "IOM",
+  Enclosure: "Enclosure",
+};
+
+function encName(e: Enclosure) {
+  return [e.vendor, e.model].filter(Boolean).join(" ") || `Enclosure ${e.id}`;
+}
+
+function EnclosureHealth({ e }: { e: Enclosure }) {
+  const els = (e.elements ?? []).filter((x) => x.level !== "absent");
+  if (!els.length) return null;
+  const groups = new Map<string, typeof els>();
+  for (const x of els) groups.set(x.type, [...(groups.get(x.type) ?? []), x]);
+  return (
+    <div className="stack" style={{ gap: 4, marginTop: 6 }}>
+      {[...groups.entries()].map(([type, xs]) => (
+        <div key={type} className="row small">
+          <span className="dim" style={{ minWidth: 70 }}>
+            {SHORT[type] ?? type}
+          </span>
+          {xs.map((x) => (
+            <span key={x.index} className={`badge ${x.level === "ok" ? "neutral" : x.level}`} title={`${type} ${x.index}: ${x.status}${x.detail ? ` (${x.detail})` : ""}`}>
+              {x.index}
+              {x.detail && !x.detail.includes(",") && !x.detail.includes(";") && x.level === "ok" ? `: ${x.detail}` : x.level !== "ok" ? `: ${x.status}` : ""}
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function OverviewPage() {
   const { data, error, loading, reload } = useFetch(() => api.get<Overview>("/api/overview"), [], 30000);
+  const boot = useFetch(() => api.get<BootReport>("/api/bootcheck"), []);
   if (loading && !data) return <Loading />;
   const s = data?.summary ?? {};
   return (
@@ -72,6 +111,24 @@ export default function OverviewPage() {
               <div className="value" style={{ color: data.events_24h?.error ? "var(--crit)" : undefined }}>{data.events_24h?.error ?? 0}</div>
             </a>
           </div>
+          {(data.enclosures ?? []).flatMap((e) =>
+            (e.elements ?? [])
+              .filter((x) => x.level === "crit" || x.level === "warn")
+              .map((x) => (
+                <div key={`${e.id}-${x.type}-${x.index}`} className={`alert ${x.level === "crit" ? "error" : "warn"}`}>
+                  <b>{encName(e)}</b>: {x.type} {x.index} — {x.status}
+                  {x.detail && ` (${x.detail})`}
+                </div>
+              )),
+          )}
+          {boot.data && boot.data.summary.failed > 0 && (
+            <div className="alert error">
+              <a href="#/boot">
+                <b>Boot check:</b> {boot.data.summary.failed} fstab {boot.data.summary.failed === 1 ? "entry" : "entries"} failed
+              </a>{" "}
+              — {boot.data.entries.filter((x) => x.status === "failed").map((x) => x.mountpoint).join(", ")}
+            </div>
+          )}
           {(data.warnings ?? []).map((w) => (
             <div key={w} className="alert warn">
               {w}
@@ -175,8 +232,9 @@ export default function OverviewPage() {
                   <h3 style={{ marginTop: 0 }}>Enclosures</h3>
                   {data.enclosures.map((e) => (
                     <div key={e.id} style={{ marginBottom: 10 }}>
-                      <div>
-                        {[e.vendor, e.model].filter(Boolean).join(" ") || "Enclosure"} <span className="dim mono small">{e.id}</span>
+                      <div className="row">
+                        {encName(e)} <span className="dim mono small">{e.id}{e.sg_device ? ` · ${e.sg_device}` : ""}</span>
+                        {e.status && <span className={`badge ${e.status}`}>{e.status === "ok" ? "OK" : e.status === "warn" ? "Warning" : "Critical"}</span>}
                       </div>
                       <div className="row small" style={{ marginTop: 4 }}>
                         {e.components.length === 0 && <span className="dim">no slot information exposed</span>}
@@ -190,6 +248,7 @@ export default function OverviewPage() {
                           </span>
                         ))}
                       </div>
+                      <EnclosureHealth e={e} />
                     </div>
                   ))}
                 </div>

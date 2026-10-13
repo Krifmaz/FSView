@@ -124,8 +124,19 @@ export interface EnclosureComponent {
   disk?: string;
 }
 
+export interface EnclosureElement {
+  type: string;
+  index: number;
+  status: string;
+  level: "ok" | "warn" | "crit" | "absent";
+  detail?: string;
+}
+
 export interface Enclosure {
   id: string;
+  sg_device?: string;
+  status?: "ok" | "warn" | "crit";
+  elements?: EnclosureElement[];
   logical_id?: string;
   vendor?: string;
   model?: string;

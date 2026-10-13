@@ -325,10 +325,19 @@ func Analyze(d *Data, inv *inventory.Inventory) *Report {
 	}
 
 	// Dependencies: mergerfs branches and nested mountpoints.
+	depFailed := map[int]bool{}
 	for i := range results {
 		r := &results[i]
 		for _, b := range r.DependsOn {
-			if dep := owningMount(b, byMount, r.Mountpoint); dep != nil && !dep.Mounted && !dep.Noauto {
+			dep := owningMount(b, byMount, r.Mountpoint)
+			if dep == nil || dep.Mounted || dep.Noauto {
+				continue
+			}
+			depFailed[i] = true
+			if r.Mounted {
+				r.Problems = append(r.Problems, fmt.Sprintf("branch %s is not mounted, but this pool is: files written to the pool land in the empty %s directory on the filesystem underneath (usually the root disk)", b, dep.Mountpoint))
+				r.Hints = append(r.Hints, fmt.Sprintf("Use a subdirectory that only exists on the mounted disk as the branch (e.g. %s/data) and add x-systemd.requires-mounts-for=%s to this entry.", strings.TrimSuffix(dep.Mountpoint, "/"), dep.Mountpoint))
+			} else {
 				r.Problems = append(r.Problems, fmt.Sprintf("depends on %s, which is not mounted", dep.Mountpoint))
 			}
 		}
@@ -352,6 +361,12 @@ func Analyze(d *Data, inv *inventory.Inventory) *Report {
 			r.Problems = append(r.Problems, fmt.Sprintf("mounted at +%s, after boot finished at +%s (manual mount or late retry)", fmtSec(*r.MountedSec), fmtSec(rep.FinishedSec)))
 		}
 		switch {
+		case depFailed[i]:
+			r.Status = "failed"
+			if !r.Mounted {
+				r.Problems = append([]string{"not mounted"}, r.Problems...)
+			}
+			rep.Summary.Failed++
 		case r.Noauto && !r.Mounted:
 			r.Status = "skipped"
 			r.Hints = append(r.Hints, "noauto: not mounted at boot by design")

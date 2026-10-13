@@ -2,6 +2,7 @@ package inventory
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -270,5 +271,35 @@ func TestBlkidMerge(t *testing.T) {
 	MergeBlkid(disks, tags)
 	if disks[0].FSType != "ext4" || disks[0].Label != "media1" || disks[1].Children[0].FSType != "xfs" || disks[1].Children[0].PartUUID != "p1" {
 		t.Fatalf("%+v", disks)
+	}
+}
+
+func TestParseSESStatus(t *testing.T) {
+	els := ParseSESStatus(string(fixture(t, "sg_ses_p2.txt")))
+	by := map[string]EnclosureElement{}
+	for _, e := range els {
+		by[fmt.Sprintf("%s/%d", e.Type, e.Index)] = e
+		if e.Type == "Device slot" || strings.HasPrefix(e.Type, "Vendor") || e.Type == "SAS connector" {
+			t.Errorf("unexpected element type %q", e.Type)
+		}
+	}
+	psu := by["Power supply/1"]
+	if psu.Level != "crit" || psu.Status != "Critical" || !strings.Contains(psu.Detail, "ac fail") || !strings.Contains(psu.Detail, "off") {
+		t.Fatalf("psu1 %+v", psu)
+	}
+	if by["Power supply/0"].Level != "ok" || by["Power supply/0"].Detail != "" {
+		t.Fatalf("psu0 %+v", by["Power supply/0"])
+	}
+	if by["Cooling/3"].Detail != "3050 rpm" || by["Temperature sensor/9"].Detail != "37 °C" || by["Voltage sensor/0"].Detail != "5.03 V" || by["Current sensor/1"].Detail != "3.94 A" {
+		t.Fatalf("sensors %+v", els)
+	}
+	if by["Temperature sensor/11"].Level != "absent" || by["Voltage sensor/2"].Level != "crit" {
+		t.Fatal("absent/unrecoverable levels")
+	}
+	if e := by["Enclosure/0"]; e.Level != "warn" || !strings.Contains(e.Detail, "failure indication") {
+		t.Fatalf("enclosure element %+v", e)
+	}
+	if EnclosureLevel(els) != "crit" {
+		t.Fatal("overall level")
 	}
 }

@@ -144,3 +144,22 @@ func TestParseShow(t *testing.T) {
 		t.Fatalf("%v", b)
 	}
 }
+
+// Seen on spiritlab: the mergerfs pool mounted although its only branch
+// (/mnt/media1) did not, so writes went to the root filesystem.
+func TestPoolMountedOverMissingBranch(t *testing.T) {
+	d, inv := spiritlabData(t)
+	d.Mounts = append(d.Mounts, inventory.Mount{Target: "/mnt/drivepool", Source: "/mnt/media1", FSType: "fuse.mergerfs"})
+	rep := Analyze(d, inv)
+	for _, e := range rep.Entries {
+		if e.Mountpoint != "/mnt/drivepool" {
+			continue
+		}
+		all := strings.Join(e.Problems, "\n")
+		if e.Status != "failed" || !e.Mounted || !strings.Contains(all, "branch /mnt/media1 is not mounted, but this pool is") || len(e.Hints) == 0 {
+			t.Fatalf("%+v", e)
+		}
+		return
+	}
+	t.Fatal("drivepool entry missing")
+}

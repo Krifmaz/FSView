@@ -109,6 +109,9 @@ type Enclosure struct {
 	Vendor     string               `json:"vendor,omitempty"`
 	Model      string               `json:"model,omitempty"`
 	Components []EnclosureComponent `json:"components"`
+	SGDevice   string               `json:"sg_device,omitempty"`
+	Status     string               `json:"status,omitempty"` // ok | warn | crit (from sg_ses)
+	Elements   []EnclosureElement   `json:"elements,omitempty"`
 }
 
 type EnclosureComponent struct {

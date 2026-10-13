@@ -106,6 +106,7 @@ func (c *Collector) Collect(ctx context.Context) (*Inventory, error) {
 	}
 	inv.Disks = disks
 	inv.Enclosures = c.Sysfs.Enclosures()
+	inv.Warnings = append(inv.Warnings, c.enclosureHealth(ctx, inv.Enclosures)...)
 	return inv, nil
 }
 

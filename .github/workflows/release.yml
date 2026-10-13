@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test
+        run: |
+          cd web && npm ci && npm run build && cd ..
+          go test ./...
+      - name: Build tarballs
+        run: |
+          make dist ARCH=amd64 VERSION=${GITHUB_REF_NAME}
+          make build ARCH=arm64 VERSION=${GITHUB_REF_NAME}
+          d=dist/fsview-${GITHUB_REF_NAME}-linux-arm64
+          mkdir -p $d && cp bin/fsview deploy/install.sh deploy/uninstall.sh deploy/fsview.conf deploy/helper.conf $d/ && cp -r deploy/systemd $d/
+          tar -C dist -czf $d.tar.gz fsview-${GITHUB_REF_NAME}-linux-arm64
+          cd dist && sha256sum *.tar.gz > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true

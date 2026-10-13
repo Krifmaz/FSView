@@ -1,0 +1,11 @@
+{"json_format_version":[1,0],"smartctl":{"version":[7,5],"exit_status":0},"device":{"name":"/dev/sdi","info_name":"/dev/sdi","type":"scsi","protocol":"SCSI"},
+"scsi_vendor":"ST28000N","scsi_product":"M000C-3WM103  SM","model_name":"ST28000N M000C-3WM103  SM","scsi_revision":"4321",
+"user_capacity":{"blocks":54689529856,"bytes":28001039286272},"logical_block_size":512,"physical_block_size":4096,"rotation_rate":7200,
+"logical_unit_id":"0x500605ba0127a8d4","serial_number":"ZXA0R1KK","scsi_transport_protocol":{"name":"SAS (SPL-4)","value":6},
+"smart_support":{"available":true,"enabled":true},"smart_status":{"passed":true},"temperature":{"current":36,"drive_trip":40},
+"power_on_time":{"hours":0,"minutes":0},
+"scsi_error_counter_log":{"read":{"total_uncorrected_errors":0},"write":{"total_uncorrected_errors":0}},
+"scsi_self_test_0":{"code":{"value":0,"string":"Default"},"result":{"value":2,"string":"Aborted (device reset ?)"},"power_on_time":{"hours":10583},"lba_first_failure":{"value":18446744073709486080},"sense_key":{"value":11,"string":"Aborted Command"},"asc":64,"ascq":130},
+"scsi_self_test_1":{"code":{"value":0,"string":"Default"},"result":{"value":2,"string":"Aborted (device reset ?)"},"power_on_time":{"hours":4081},"lba_first_failure":{"value":18446744073709486080},"sense_key":{"value":11,"string":"Aborted Command"},"asc":64,"ascq":130},
+"scsi_self_test_2":{"code":{"value":0,"string":"Default"},"result":{"value":0,"string":"Completed"},"power_on_time":{"hours":4081}},
+"scsi_extended_self_test_seconds":20908}

@@ -1,0 +1,40 @@
+[Unit]
+Description=FSView web UI (unprivileged)
+Documentation=https://github.com/krifmaz/fsview
+After=network-online.target fsview-helper.service
+Wants=network-online.target fsview-helper.service
+
+[Service]
+Type=simple
+User=fsview
+Group=fsview
+ExecStart=/usr/local/bin/fsview serve -config /etc/fsview/fsview.conf
+Restart=on-failure
+RestartSec=3
+StateDirectory=fsview
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

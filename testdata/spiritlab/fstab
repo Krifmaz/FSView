@@ -1,0 +1,8 @@
+# <file system> <mount point> <type> <options> <dump> <pass>
+/dev/pve/root / ext4 errors=remount-ro 0 1
+UUID=8B42-B13D /boot/efi vfat defaults 0 1
+/dev/pve/swap none swap sw 0 0
+proc /proc proc defaults 0 0
+UUID=c69cfb3b-4f39-449a-bb21-cd2e4ba23d49 /mnt/media1 ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2
+UUID=df81e242-df1f-41a9-87ea-b441da0ee820 /mnt/cache ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2
+/mnt/media1 /mnt/drivepool fuse.mergerfs defaults,nofail,x-systemd.device-timeout=10s,allow_other,use_ino,cache.files=partial,dropcacheonclose=true,category.create=mfs 0 0

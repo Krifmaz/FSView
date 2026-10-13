@@ -1,0 +1,25 @@
+[Unit]
+Description=FSView root helper (typed disk operations over a Unix socket)
+Documentation=https://github.com/krifmaz/fsview
+After=local-fs.target systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fsview helper -config /etc/fsview/helper.conf
+Restart=on-failure
+RestartSec=2
+# /run/fsview holds the socket (root:fsview 0660).
+RuntimeDirectory=fsview
+RuntimeDirectoryMode=0755
+UMask=0027
+PrivateTmp=yes
+ProtectHome=read-only
+NoNewPrivileges=yes
+ProtectKernelModules=yes
+ProtectClock=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

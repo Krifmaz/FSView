@@ -1,0 +1,310 @@
+export type Status = "ok" | "warn" | "crit" | "unknown";
+
+export interface Usage {
+  size_bytes: number;
+  used_bytes: number;
+  avail_bytes: number;
+}
+
+export interface Node {
+  name: string;
+  kname: string;
+  path: string;
+  type: string;
+  size_bytes: number;
+  fstype?: string;
+  fsver?: string;
+  label?: string;
+  uuid?: string;
+  partuuid?: string;
+  partlabel?: string;
+  parttypename?: string;
+  partn?: number;
+  read_only?: boolean;
+  mountpoints?: string[];
+  usage?: Usage;
+  children?: Node[];
+}
+
+export interface EnclosureSlot {
+  enclosure: string;
+  component: string;
+  slot?: number;
+  status?: string;
+  fault?: boolean;
+  locate?: boolean;
+}
+
+export interface Topology {
+  devpath?: string;
+  hba?: string;
+  hba_name?: string;
+  hba_driver?: string;
+  scsi_host?: string;
+  port?: string;
+  expander?: string;
+  end_device?: string;
+  sas_address?: string;
+  bay_id?: number;
+  enclosure?: EnclosureSlot;
+}
+
+export interface Finding {
+  level: Status;
+  text: string;
+}
+
+export interface Running {
+  description: string;
+  remaining_percent?: number;
+}
+
+export interface HealthView {
+  status: Status;
+  findings?: Finding[];
+  temperature_c?: number;
+  power_on_hours?: number;
+  protocol?: string;
+  devtype?: string;
+  model?: string;
+  standby: boolean;
+  self_test_running?: Running;
+  updated_at: string;
+  checked_at: string;
+  error?: string;
+}
+
+export interface Disk {
+  name: string;
+  path: string;
+  type: string;
+  model: string;
+  vendor?: string;
+  serial?: string;
+  wwn?: string;
+  revision?: string;
+  size_bytes: number;
+  transport: string;
+  hctl?: string;
+  rotational: boolean;
+  removable: boolean;
+  read_only: boolean;
+  state?: string;
+  pttype?: string;
+  fstype?: string;
+  fsver?: string;
+  label?: string;
+  uuid?: string;
+  mountpoints?: string[];
+  usage?: Usage;
+  children?: Node[];
+  topology: Topology;
+  protected: boolean;
+  protected_reasons?: string[];
+  display_model: string;
+  display_transport: string;
+  health?: HealthView;
+}
+
+export interface HBA {
+  pci: string;
+  name?: string;
+  driver?: string;
+  hosts?: string[];
+  disks?: string[];
+}
+
+export interface EnclosureComponent {
+  name: string;
+  slot?: number;
+  status?: string;
+  fault?: boolean;
+  locate?: boolean;
+  active?: boolean;
+  disk?: string;
+}
+
+export interface Enclosure {
+  id: string;
+  logical_id?: string;
+  vendor?: string;
+  model?: string;
+  components: EnclosureComponent[];
+}
+
+export interface Overview {
+  hostname: string;
+  collected_at: string;
+  disks: Disk[];
+  hbas: HBA[] | null;
+  enclosures: Enclosure[] | null;
+  warnings?: string[] | null;
+  summary: Record<string, number>;
+  events_24h: Record<string, number>;
+}
+
+export interface Attribute {
+  id: number;
+  name: string;
+  value: number;
+  worst: number;
+  thresh: number;
+  raw: number;
+  raw_string: string;
+  when_failed?: string;
+  prefailure: boolean;
+}
+
+export interface SelfTest {
+  type: string;
+  status: string;
+  outcome: "passed" | "failed" | "aborted" | "running" | "unknown";
+  lifetime_hours?: number;
+  lba?: number;
+  detail?: string;
+}
+
+export interface SmartReport {
+  device: string;
+  devtype: string;
+  protocol: string;
+  model: string;
+  family?: string;
+  serial: string;
+  firmware?: string;
+  capacity_bytes: number;
+  rotation_rate: number;
+  smart_available: boolean;
+  smart_enabled: boolean;
+  passed?: boolean;
+  standby: boolean;
+  temperature_c?: number;
+  temp_trip_c?: number;
+  power_on_hours?: number;
+  power_cycles?: number;
+  reallocated?: number;
+  pending?: number;
+  offline_uncorrectable?: number;
+  reported_uncorrectable?: number;
+  crc_errors?: number;
+  grown_defects?: number;
+  uncorrected_errors?: number;
+  nvme_critical_warning?: number;
+  nvme_percent_used?: number;
+  nvme_available_spare?: number;
+  nvme_spare_threshold?: number;
+  nvme_media_errors?: number;
+  nvme_unsafe_shutdowns?: number;
+  nvme_data_written_tb?: number;
+  attributes?: Attribute[];
+  self_tests?: SelfTest[];
+  self_test_running?: Running;
+  short_test_minutes?: number;
+  long_test_minutes?: number;
+  exit_status: number;
+  messages?: string[];
+  notes?: string[];
+}
+
+export interface SmartEntry {
+  report?: SmartReport;
+  assessment: { status: Status; findings?: Finding[] };
+  updated_at: string;
+  checked_at: string;
+  standby: boolean;
+  error?: string;
+}
+
+export interface DiskDetail {
+  disk: Disk;
+  smart: SmartEntry | null;
+  raw?: unknown;
+}
+
+export interface DiskEvent {
+  cursor: string;
+  time: string;
+  boot_id: string;
+  monotonic_sec: number;
+  category: string;
+  severity: "error" | "warn" | "info";
+  device?: string;
+  message: string;
+  late?: boolean;
+}
+
+export interface BootEntry {
+  line: number;
+  spec: string;
+  mountpoint: string;
+  fstype: string;
+  options: string;
+  status: "ok" | "failed" | "late" | "skipped";
+  problems?: string[];
+  hints?: string[];
+  device?: string;
+  disk?: string;
+  mounted: boolean;
+  mounted_sec?: number;
+  device_appeared_sec?: number;
+  device_timeout_sec: number;
+  nofail: boolean;
+  noauto: boolean;
+  depends_on?: string[];
+}
+
+export interface BootReport {
+  boot_id: string;
+  collected_at: string;
+  userspace_start_sec: number;
+  boot_finished_sec: number;
+  entries: BootEntry[];
+  late_devices: { device: string; appeared_sec: number; after_timeout: boolean; mountpoints?: string[]; message: string }[] | null;
+  summary: { ok: number; failed: number; late: number; skipped: number };
+  fstab_errors?: string[];
+}
+
+export interface AuditRecord {
+  time: string;
+  actor: string;
+  client_ip?: string;
+  peer_uid: number;
+  op: string;
+  targets?: string[];
+  params?: unknown;
+  dry_run: boolean;
+  commands?: string[];
+  result: "ok" | "error" | "rejected" | "dry-run";
+  error?: string;
+  output?: string;
+}
+
+export interface Thresholds {
+  temp_warn_c: number;
+  temp_crit_c: number;
+  trip_margin_c: number;
+  reallocated_warn: number;
+  reallocated_crit: number;
+  pending_warn: number;
+  pending_crit: number;
+  uncorrectable_warn: number;
+  crc_warn: number;
+  nvme_used_warn: number;
+  nvme_used_crit: number;
+}
+
+export interface Settings {
+  thresholds: Thresholds;
+  late_device_sec: number;
+  event_retention: number;
+}
+
+export interface StatusInfo {
+  version: string;
+  listen: string[];
+  allow: string[];
+  user: string;
+  tls: boolean;
+  helper?: { version: string; hostname: string; writes_enabled: boolean; boot_id: string; tools: Record<string, boolean> };
+  helper_error?: string;
+}

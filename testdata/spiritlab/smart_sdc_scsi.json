@@ -1,0 +1,11 @@
+{"json_format_version":[1,0],"smartctl":{"version":[7,5],"exit_status":128},"device":{"name":"/dev/sdc","info_name":"/dev/sdc","type":"scsi","protocol":"SCSI"},
+"scsi_vendor":"ST2000DM","scsi_product":"006-2DM164    SM","model_name":"ST2000DM 006-2DM164    SM","scsi_revision":"4321",
+"user_capacity":{"blocks":3907029168,"bytes":2000398934016},"logical_block_size":512,"physical_block_size":4096,"rotation_rate":7200,
+"form_factor":{"scsi_value":2,"name":"3.5 inches"},"logical_unit_id":"0x500605ba00adea88","serial_number":"Z4Z9WWC9",
+"scsi_transport_protocol":{"name":"SAS (SPL-4)","value":6},"smart_support":{"available":true,"enabled":true},"temperature_warning":{"enabled":true},
+"smart_status":{"passed":true},"temperature":{"current":28},"power_on_time":{"hours":0,"minutes":0},
+"scsi_start_stop_cycle_counter":{"year_of_manufacture":"2008","week_of_manufacture":"24","specified_cycle_count_over_device_lifetime":65536,"accumulated_start_stop_cycles":124},
+"scsi_error_counter_log":{"read":{"total_errors_corrected":0,"gigabytes_processed":"0.000","total_uncorrected_errors":0},"write":{"total_errors_corrected":0,"gigabytes_processed":"0.000","total_uncorrected_errors":0}},
+"scsi_self_test_0":{"code":{"value":0,"string":"Default"},"result":{"value":7,"string":"Failed in segment"},"power_on_time":{"hours":53208,"aka":"accumulated_power_on_hours"},"lba_first_failure":{"value":179177313533952,"aka":"address_of_first_failure"},"sense_key":{"value":3,"string":"Medium Error"},"asc":64,"ascq":135,"vendor_specific":0},
+"scsi_self_test_1":{"code":{"value":0,"string":"Default"},"result":{"value":0,"string":"Completed"},"power_on_time":{"hours":53206,"aka":"accumulated_power_on_hours"}},
+"scsi_extended_self_test_seconds":12480}

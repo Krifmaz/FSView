@@ -1,0 +1,20 @@
+{"json_format_version":[1,0],"_comment":"SYNTHETIC: what smartctl -d sat is expected to return for sdb behind the SAS bridge. Replace with real output.",
+"smartctl":{"version":[7,5],"exit_status":0},"device":{"name":"/dev/sdb","info_name":"/dev/sdb [SAT]","type":"sat","protocol":"ATA"},
+"model_family":"Seagate BarraCuda 3.5 (SMR)","model_name":"ST6000DM003-2CY186","serial_number":"ZCT1RSPR","firmware_version":"0001",
+"user_capacity":{"blocks":11721045168,"bytes":6001175126016},"rotation_rate":5425,
+"smart_support":{"available":true,"enabled":true},"smart_status":{"passed":true},
+"ata_smart_data":{"self_test":{"status":{"value":0,"string":"completed without error","passed":true},"polling_minutes":{"short":1,"extended":744}}},
+"ata_smart_attributes":{"revision":10,"table":[
+ {"id":1,"name":"Raw_Read_Error_Rate","value":82,"worst":64,"thresh":6,"when_failed":"","flags":{"value":15,"prefailure":true},"raw":{"value":161203216,"string":"161203216"}},
+ {"id":5,"name":"Reallocated_Sector_Ct","value":100,"worst":100,"thresh":10,"when_failed":"","flags":{"value":51,"prefailure":true},"raw":{"value":8,"string":"8"}},
+ {"id":9,"name":"Power_On_Hours","value":58,"worst":58,"thresh":0,"when_failed":"","flags":{"value":50,"prefailure":false},"raw":{"value":36842,"string":"36842 (12 0 0)"}},
+ {"id":12,"name":"Power_Cycle_Count","value":100,"worst":100,"thresh":20,"when_failed":"","flags":{"value":50,"prefailure":false},"raw":{"value":60,"string":"60"}},
+ {"id":187,"name":"Reported_Uncorrect","value":100,"worst":100,"thresh":0,"when_failed":"","flags":{"value":50,"prefailure":false},"raw":{"value":0,"string":"0"}},
+ {"id":194,"name":"Temperature_Celsius","value":31,"worst":45,"thresh":0,"when_failed":"","flags":{"value":34,"prefailure":false},"raw":{"value":31,"string":"31 (0 18 0 0 0)"}},
+ {"id":197,"name":"Current_Pending_Sector","value":100,"worst":100,"thresh":0,"when_failed":"","flags":{"value":18,"prefailure":false},"raw":{"value":0,"string":"0"}},
+ {"id":198,"name":"Offline_Uncorrectable","value":100,"worst":100,"thresh":0,"when_failed":"","flags":{"value":16,"prefailure":false},"raw":{"value":0,"string":"0"}},
+ {"id":199,"name":"UDMA_CRC_Error_Count","value":200,"worst":200,"thresh":0,"when_failed":"","flags":{"value":62,"prefailure":false},"raw":{"value":0,"string":"0"}}]},
+"power_on_time":{"hours":36842},"power_cycle_count":60,"temperature":{"current":31},
+"ata_smart_self_test_log":{"standard":{"revision":1,"table":[
+ {"type":{"value":1,"string":"Short offline"},"status":{"value":0,"string":"Completed without error","passed":true},"lifetime_hours":36800},
+ {"type":{"value":2,"string":"Extended offline"},"status":{"value":121,"string":"Completed: read failure","remaining_percent":90,"passed":false},"lifetime_hours":36789,"lba":123456789}],"count":2}}}

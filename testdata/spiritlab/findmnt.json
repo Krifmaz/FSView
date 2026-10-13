@@ -1,0 +1,10 @@
+{"filesystems":[{"target":"/","source":"/dev/mapper/pve-root","fstype":"ext4","options":"rw,relatime,errors=remount-ro","children":[
+ {"target":"/sys","source":"sysfs","fstype":"sysfs","options":"rw,nosuid,nodev,noexec,relatime"},
+ {"target":"/proc","source":"proc","fstype":"proc","options":"rw,relatime"},
+ {"target":"/dev","source":"udev","fstype":"devtmpfs","options":"rw,nosuid,relatime"},
+ {"target":"/run","source":"tmpfs","fstype":"tmpfs","options":"rw,nosuid,nodev,noexec,relatime"},
+ {"target":"/tmp","source":"tmpfs","fstype":"tmpfs","options":"rw,nosuid,nodev"},
+ {"target":"/boot/efi","source":"/dev/nvme0n1p2","fstype":"vfat","options":"rw,relatime,fmask=0022,dmask=0022"},
+ {"target":"/mnt/cache","source":"/dev/sda1","fstype":"ext4","options":"rw,relatime,stripe=32"},
+ {"target":"/etc/pve","source":"/dev/fuse","fstype":"fuse","options":"rw,nosuid,nodev,relatime"},
+ {"target":"/var/lib/lxcfs","source":"lxcfs","fstype":"fuse.lxcfs","options":"rw,nosuid,nodev,relatime"}]}]}

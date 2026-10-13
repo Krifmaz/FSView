@@ -1,0 +1,10 @@
+{"json_format_version":[1,0],"smartctl":{"version":[7,5],"exit_status":0},"device":{"name":"/dev/nvme0n1","info_name":"/dev/nvme0n1","type":"nvme","protocol":"NVMe"},
+"model_name":"WDC CH SN530 SDBPTPZ-1T00-1024","serial_number":"21366L801318","firmware_version":"08.05.00","nvme_total_capacity":930934161408,
+"user_capacity":{"blocks":227278848,"bytes":930934161408},"logical_block_size":4096,"smart_support":{"available":true,"enabled":true},
+"nvme_composite_temperature_threshold":{"warning":79,"critical":85},"temperature":{"op_limit_max":79,"critical_limit_max":85,"current":42},
+"smart_status":{"passed":true,"nvme":{"value":0}},
+"nvme_smart_health_information_log":{"nsid":-1,"critical_warning":0,"temperature":42,"available_spare":100,"available_spare_threshold":10,"percentage_used":0,"data_units_read":49120626,"data_units_written":45543999,"host_reads":848125801,"host_writes":646821271,"controller_busy_time":1746,"power_cycles":1393,"power_on_hours":4883,"unsafe_shutdowns":298,"media_errors":0,"num_err_log_entries":0,"warning_temp_time":13,"critical_comp_time":0},
+"spare_available":{"current_percent":100,"threshold_percent":10},"endurance_used":{"current_percent":0},"power_cycle_count":1393,"power_on_time":{"hours":4883},
+"nvme_self_test_log":{"nsid":-1,"current_self_test_operation":{"value":0,"string":"No self-test in progress"},"table":[
+ {"self_test_code":{"value":1,"string":"Short"},"self_test_result":{"value":1,"string":"Aborted: Self-test command"},"power_on_hours":875},
+ {"self_test_code":{"value":1,"string":"Short"},"self_test_result":{"value":0,"string":"Completed without error"},"power_on_hours":875}]}}

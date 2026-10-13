@@ -11,8 +11,12 @@ pub struct EnclosureElement {
     pub index: u32,
     /// SES status text, e.g. "OK", "Critical".
     pub status: String,
-    /// ok | warn | crit | absent
+    /// ok | warn | crit | absent, or "ignored" when the user marked it as
+    /// expected (e.g. an empty PSU bay).
     pub level: String,
+    /// Stable identifier for ignoring the element (set by the web server).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub detail: String,
 }

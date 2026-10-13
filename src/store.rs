@@ -30,6 +30,9 @@ pub struct Settings {
     pub thresholds: Thresholds,
     pub late_device_sec: i64,
     pub event_retention: usize,
+    /// Enclosure elements the user marked as expected (keys from
+    /// `EnclosureElement::key`), e.g. empty PSU bays.
+    pub ignored_elements: Vec<String>,
 }
 
 impl Default for Settings {
@@ -38,6 +41,7 @@ impl Default for Settings {
             thresholds: Thresholds::default(),
             late_device_sec: 60,
             event_retention: 20000,
+            ignored_elements: vec![],
         }
     }
 }

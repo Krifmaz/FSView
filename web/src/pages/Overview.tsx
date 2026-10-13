@@ -59,9 +59,20 @@ function EnclosureHealth({ e }: { e: Enclosure }) {
             {SHORT[type] ?? type}
           </span>
           {xs.map((x) => (
-            <span key={x.index} className={`badge ${x.level === "ok" ? "neutral" : x.level}`} title={`${type} ${x.index}: ${x.status}${x.detail ? ` (${x.detail})` : ""}`}>
+            <span
+              key={x.index}
+              className={`badge ${x.level === "ok" || x.level === "ignored" ? "neutral" : x.level}`}
+              style={x.level === "ignored" ? { opacity: 0.55 } : undefined}
+              title={`${type} ${x.index}: ${x.status}${x.detail ? ` (${x.detail})` : ""}${x.level === "ignored" ? " (marked as expected)" : ""}`}
+            >
               {x.index}
-              {x.detail && !x.detail.includes(",") && !x.detail.includes(";") && x.level === "ok" ? `: ${x.detail}` : x.level !== "ok" ? `: ${x.status}` : ""}
+              {x.level === "ignored"
+                ? ": expected"
+                : x.detail && !x.detail.includes(",") && !x.detail.includes(";") && x.level === "ok"
+                  ? `: ${x.detail}`
+                  : x.level !== "ok"
+                    ? `: ${x.status}`
+                    : ""}
             </span>
           ))}
         </div>
@@ -75,6 +86,10 @@ export default function OverviewPage() {
   const boot = useFetch(() => api.get<BootReport>("/api/bootcheck"), []);
   if (loading && !data) return <Loading />;
   const s = data?.summary ?? {};
+  const ignoreElement = async (key: string, ignore: boolean, refresh = true) => {
+    await api.post("/api/enclosures/ignore", { key, ignore });
+    if (refresh) await reload();
+  };
   return (
     <>
       <div className="between">
@@ -115,12 +130,41 @@ export default function OverviewPage() {
             (e.elements ?? [])
               .filter((x) => x.level === "crit" || x.level === "warn")
               .map((x) => (
-                <div key={`${e.id}-${x.type}-${x.index}`} className={`alert ${x.level === "crit" ? "error" : "warn"}`}>
-                  <b>{encName(e)}</b>: {x.type} {x.index} — {x.status}
-                  {x.detail && ` (${x.detail})`}
+                <div key={`${e.id}-${x.type}-${x.index}`} className={`alert ${x.level === "crit" ? "error" : "warn"} between`}>
+                  <span>
+                    <b>{encName(e)}</b>: {x.type} {x.index} — {x.status}
+                    {x.detail && ` (${x.detail})`}
+                  </span>
+                  {x.key && (
+                    <button
+                      className="btn ghost small"
+                      title="For example an empty PSU bay. It stays visible on the enclosure card and can be restored there."
+                      onClick={() => ignoreElement(x.key!, true)}
+                    >
+                      Mark as expected
+                    </button>
+                  )}
                 </div>
               )),
           )}
+          {(() => {
+            const ign = (data.enclosures ?? []).flatMap((e) => (e.elements ?? []).filter((x) => x.level === "ignored"));
+            if (!ign.length) return null;
+            return (
+              <div className="small dim" style={{ marginBottom: 12 }}>
+                {ign.length} enclosure {ign.length === 1 ? "alert is" : "alerts are"} marked as expected ({ign.map((x) => `${SHORT[x.type] ?? x.type} ${x.index}`).join(", ")}).{" "}
+                <a
+                  href="#/overview"
+                  onClick={(ev) => {
+                    ev.preventDefault();
+                    Promise.all(ign.map((x) => ignoreElement(x.key!, false, false))).then(reload);
+                  }}
+                >
+                  Show them again
+                </a>
+              </div>
+            );
+          })()}
           {(data.hidden?.results ?? [])
             .filter((h) => h.files > 0)
             .map((h) => (

@@ -473,3 +473,77 @@ async fn fstab_apply_forwards_to_helper() {
     .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
+
+#[test]
+fn ignored_enclosure_elements() {
+    use crate::inventory::{Enclosure, EnclosureElement};
+    let el = |kind: &str, index, level: &str| EnclosureElement {
+        kind: kind.into(),
+        index,
+        status: "x".into(),
+        level: level.into(),
+        ..Default::default()
+    };
+    let e = Enclosure {
+        id: "2:0:9:0".into(),
+        logical_id: "5000a0b1c2d3e4f5".into(),
+        status: "crit".into(),
+        elements: vec![el("Power supply", 1, "crit"), el("Power supply", 3, "ok")],
+        ..Default::default()
+    };
+    let v = super::handlers::enclosures_view(std::slice::from_ref(&e), &[]);
+    assert_eq!(v[0].elements[0].key, "5000a0b1c2d3e4f5/Power supply/1");
+    assert_eq!(v[0].status, "crit");
+    let v = super::handlers::enclosures_view(&[e], &["5000a0b1c2d3e4f5/Power supply/1".into()]);
+    assert_eq!(v[0].elements[0].level, "ignored");
+    assert_eq!(v[0].status, "ok");
+}
+
+#[tokio::test]
+async fn enclosure_ignore_endpoint_and_settings_keep_list() {
+    let t = setup();
+    let tok = login(&t).await;
+    let (s, _, b) = send(
+        &t,
+        "POST",
+        "/api/enclosures/ignore",
+        r#"{"key":"W/Power supply/1","ignore":true}"#,
+        Some(&tok),
+        true,
+        LAN,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let (_, _, b) = send(&t, "GET", "/api/settings", "", Some(&tok), true, LAN).await;
+    let mut v: Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["ignored_elements"], json!(["W/Power supply/1"]));
+    // A settings save from an older page must not wipe the list.
+    v["ignored_elements"] = json!([]);
+    let (s, _, b) = send(
+        &t,
+        "PUT",
+        "/api/settings",
+        &v.to_string(),
+        Some(&tok),
+        true,
+        LAN,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(
+        t.app.store.settings().ignored_elements,
+        vec!["W/Power supply/1".to_string()]
+    );
+    let (s, _, _) = send(
+        &t,
+        "POST",
+        "/api/enclosures/ignore",
+        r#"{"key":"W/Power supply/1","ignore":false}"#,
+        Some(&tok),
+        true,
+        LAN,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(t.app.store.settings().ignored_elements.is_empty());
+}

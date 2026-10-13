@@ -128,8 +128,9 @@ export interface EnclosureElement {
   type: string;
   index: number;
   status: string;
-  level: "ok" | "warn" | "crit" | "absent";
+  level: "ok" | "warn" | "crit" | "absent" | "ignored";
   detail?: string;
+  key?: string;
 }
 
 export interface Enclosure {
@@ -313,6 +314,7 @@ export interface Settings {
   thresholds: Thresholds;
   late_device_sec: number;
   event_retention: number;
+  ignored_elements?: string[];
 }
 
 export interface StatusInfo {

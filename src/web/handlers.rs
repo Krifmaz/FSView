@@ -54,6 +54,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/hidden", get(hidden))
         .route("/api/hidden/scan", post(hidden_scan))
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/enclosures/ignore", post(enclosure_ignore))
         .route("/api/fstab", get(fstab_get))
         .route("/api/fstab/preview", post(fstab_preview))
         .route("/api/fstab/apply", post(fstab_apply))
@@ -534,12 +535,72 @@ async fn overview(State(app): AppState, _u: User, Query(q): Query<FreshQ>) -> Re
         "collected_at": inv.collected_at,
         "disks": views,
         "hbas": inv.hbas,
-        "enclosures": inv.enclosures,
+        "enclosures": enclosures_view(&inv.enclosures, &app.store.settings().ignored_elements),
         "warnings": inv.warnings,
         "summary": sum,
         "events_24h": app.events.counts(Utc::now() - chrono::Duration::hours(24)),
         "hidden": app.hidden_snapshot(),
     }))
+}
+
+/// Adds element keys and applies the user's ignore list.
+pub(crate) fn enclosures_view(
+    encs: &[crate::inventory::Enclosure],
+    ignored: &[String],
+) -> Vec<crate::inventory::Enclosure> {
+    let mut out = encs.to_vec();
+    for e in out.iter_mut() {
+        // logical_id is the shelf's SES WWN; the SCSI address can change
+        // between boots.
+        let id = if e.logical_id.is_empty() {
+            format!("{} {}", e.vendor, e.model)
+        } else {
+            e.logical_id.clone()
+        };
+        for el in e.elements.iter_mut() {
+            el.key = format!("{}/{}/{}", id.trim(), el.kind, el.index);
+            if ignored.contains(&el.key) && el.level != "absent" {
+                el.level = "ignored".into();
+            }
+        }
+        if !e.elements.is_empty() {
+            e.status = crate::inventory::enclosure_level(&e.elements);
+        }
+    }
+    out
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IgnoreBody {
+    key: String,
+    ignore: bool,
+}
+
+async fn enclosure_ignore(
+    State(app): AppState,
+    _u: User,
+    JsonBody(b): JsonBody<IgnoreBody>,
+) -> Response {
+    if b.key.is_empty() || b.key.len() > 200 || b.key.chars().any(char::is_control) {
+        return err(StatusCode::BAD_REQUEST, "bad_request", "invalid key");
+    }
+    let mut s = app.store.settings();
+    s.ignored_elements.retain(|k| *k != b.key);
+    if b.ignore {
+        if s.ignored_elements.len() >= 200 {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "too many ignored elements",
+            );
+        }
+        s.ignored_elements.push(b.key);
+    }
+    match app.store.set_settings(s.clone()) {
+        Ok(()) => ok(json!({"ignored_elements": s.ignored_elements})),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", e),
+    }
 }
 
 fn name_re() -> &'static Regex {
@@ -844,7 +905,13 @@ async fn get_settings(State(app): AppState, _u: User) -> Response {
     ok(app.store.settings())
 }
 
-async fn put_settings(State(app): AppState, _u: User, JsonBody(v): JsonBody<Settings>) -> Response {
+async fn put_settings(
+    State(app): AppState,
+    _u: User,
+    JsonBody(mut v): JsonBody<Settings>,
+) -> Response {
+    // Managed through /api/enclosures/ignore.
+    v.ignored_elements = app.store.settings().ignored_elements;
     let t = v.thresholds;
     let bad = |m: &str| err(StatusCode::BAD_REQUEST, "bad_request", m);
     if t.temp_warn_c < 20

@@ -10,7 +10,7 @@
 set -euo pipefail
 
 REPO="${FSVIEW_REPO:-Krifmaz/FSView}"
-VERSION=""
+FSV_VERSION=""
 BINARY=""
 BIN_DIR=/usr/local/bin
 ETC=/etc/fsview
@@ -23,7 +23,7 @@ info() { echo "==> $*"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) VERSION="$2"; shift 2 ;;
+    --version) FSV_VERSION="$2"; shift 2 ;;
     --binary) BINARY="$2"; shift 2 ;;
     -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) die "unknown option $1" ;;
@@ -33,8 +33,12 @@ done
 [ "$(id -u)" = 0 ] || die "run as root"
 command -v systemctl >/dev/null || die "systemd is required"
 if [ -r /etc/os-release ]; then
-  . /etc/os-release
-  [ "${ID:-}" = debian ] || [ "${ID_LIKE:-}" = debian ] || echo "warning: tested on Debian 13 / Proxmox VE 9; this is ${PRETTY_NAME:-unknown}"
+  # Read in a subshell: os-release defines VERSION, which must not clobber ours.
+  OS_INFO="$(. /etc/os-release; echo "${ID:-}|${ID_LIKE:-}|${PRETTY_NAME:-unknown}")"
+  case "$OS_INFO" in
+    debian\|*|*\|*debian*\|*) ;;
+    *) echo "warning: tested on Debian 13 / Proxmox VE 9; this is ${OS_INFO##*|}" ;;
+  esac
 fi
 
 case "$(uname -m)" in
@@ -57,18 +61,18 @@ elif [ -n "$SRC" ] && [ -x "$SRC/fsview" ] && [ -f "$SRC/systemd/fsview.service"
   BINARY="$SRC/fsview"
 else
   command -v curl >/dev/null || die "curl is required"
-  if [ -z "$VERSION" ]; then
-    VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
-    [ -n "$VERSION" ] || die "could not determine the latest release of $REPO"
+  if [ -z "$FSV_VERSION" ]; then
+    FSV_VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
+    [ -n "$FSV_VERSION" ] || die "could not determine the latest release of $REPO"
   fi
   TMP="$(mktemp -d)"
-  NAME="fsview-$VERSION-linux-$ARCH.tar.gz"
+  NAME="fsview-$FSV_VERSION-linux-$ARCH.tar.gz"
   info "downloading $NAME"
-  curl -fsSL -o "$TMP/$NAME" "https://github.com/$REPO/releases/download/$VERSION/$NAME"
-  curl -fsSL -o "$TMP/SHA256SUMS" "https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS"
+  curl -fsSL -o "$TMP/$NAME" "https://github.com/$REPO/releases/download/$FSV_VERSION/$NAME"
+  curl -fsSL -o "$TMP/SHA256SUMS" "https://github.com/$REPO/releases/download/$FSV_VERSION/SHA256SUMS"
   (cd "$TMP" && grep " $NAME\$" SHA256SUMS | sha256sum -c -) || die "checksum mismatch"
   tar -xzf "$TMP/$NAME" -C "$TMP"
-  SRC="$TMP/fsview-$VERSION-linux-$ARCH"
+  SRC="$TMP/fsview-$FSV_VERSION-linux-$ARCH"
   BINARY="$SRC/fsview"
 fi
 

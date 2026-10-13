@@ -19,10 +19,6 @@ const FIELDS: { key: keyof Thresholds; label: string; unit?: string }[] = [
   { key: "nvme_used_crit", label: "NVMe endurance used critical", unit: "%" },
 ];
 
-function theme(): string {
-  return document.documentElement.dataset.theme ?? "dark";
-}
-
 export default function SettingsPage({ user, onLogout }: { user: string; onLogout: () => void }) {
   const st = useFetch(() => api.get<StatusInfo>("/api/status"), []);
   const cfg = useFetch(() => api.get<Settings>("/api/settings"), []);
@@ -30,7 +26,6 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
   const [msg, setMsg] = useState<{ kind: string; text: string } | null>(null);
   const [pw, setPw] = useState({ current: "", next: "", repeat: "" });
   const [pwMsg, setPwMsg] = useState<{ kind: string; text: string } | null>(null);
-  const [th, setTh] = useState(theme());
 
   useEffect(() => {
     if (cfg.data) setForm(cfg.data);
@@ -60,17 +55,6 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
     } catch (err: any) {
       setPwMsg({ kind: "error", text: err.message });
     }
-  };
-
-  const toggleTheme = () => {
-    const t = th === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = t;
-    try {
-      localStorage.setItem("fsview-theme", t);
-    } catch {
-      /* ignore */
-    }
-    setTh(t);
   };
 
   const logout = async () => {
@@ -131,12 +115,6 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
             </span>
             <button className="btn" onClick={logout}>
               Sign out
-            </button>
-          </div>
-          <div className="between">
-            <span>Theme</span>
-            <button className="btn" onClick={toggleTheme}>
-              {th === "dark" ? "☾ Dark" : "☀ Light"}
             </button>
           </div>
           <form className="stack" onSubmit={changePw}>

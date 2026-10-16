@@ -166,3 +166,35 @@ fn lifetime_traffic_and_life() {
     let l = lifespan(&old, OK);
     assert_eq!((l.remaining_pct, l.level.as_str()), (Some(0), WARN));
 }
+
+#[test]
+fn old_error_log_with_later_passing_test_is_not_a_warning() {
+    let mut r = Report {
+        power_on_hours: Some(1743),
+        ata_error_count: Some(4),
+        ata_last_error_hours: Some(673),
+        ata_last_error: "Error: UNC".into(),
+        passed: Some(true),
+        smart_available: true,
+        ..Default::default()
+    };
+    r.self_tests.push(SelfTest {
+        kind: "Extended offline".into(),
+        status: "Completed without error".into(),
+        outcome: "passed".into(),
+        lifetime_hours: Some(1690),
+        lba: None,
+        detail: String::new(),
+    });
+    let a = evaluate(&r, &Thresholds::default());
+    assert_eq!(a.status, OK, "{:?}", a.findings);
+    assert!(a.findings[0].text.contains("old"));
+
+    // Recent errors still warn.
+    r.ata_last_error_hours = Some(1700);
+    assert_eq!(evaluate(&r, &Thresholds::default()).status, WARN);
+    // Old errors without a later passing test still warn.
+    r.ata_last_error_hours = Some(673);
+    r.self_tests[0].lifetime_hours = Some(600);
+    assert_eq!(evaluate(&r, &Thresholds::default()).status, WARN);
+}

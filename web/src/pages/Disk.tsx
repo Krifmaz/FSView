@@ -259,7 +259,7 @@ export default function DiskPage({ name }: { name: string }) {
       {r && (
         <>
           {(sm?.assessment.findings ?? []).map((f) => (
-            <div key={f.text} className={`alert ${f.level === "crit" ? "error" : "warn"}`}>
+            <div key={f.text} className={`alert ${f.level === "crit" ? "error" : f.level === "ok" ? "info" : "warn"}`}>
               {f.text}
             </div>
           ))}

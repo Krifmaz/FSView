@@ -44,6 +44,20 @@ pub const WARN: &str = "warn";
 pub const CRIT: &str = "crit";
 pub const UNKNOWN: &str = "unknown";
 
+/// Error-log entries older than this, with a passing self-test after the
+/// latest one, are history rather than a sign of a failing disk.
+const STALE_ERROR_HOURS: i64 = 720;
+
+fn errors_are_stale(r: &Report) -> bool {
+    let (Some(last), Some(now)) = (r.ata_last_error_hours, r.power_on_hours) else {
+        return false;
+    };
+    now - last >= STALE_ERROR_HOURS
+        && r.self_tests
+            .iter()
+            .any(|t| t.outcome == "passed" && t.lifetime_hours.is_some_and(|h| h > last))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Finding {
     pub level: String,
@@ -215,7 +229,12 @@ pub fn evaluate(r: &Report, t: &Thresholds) -> Assessment {
             }
             msg.push_str(&format!(": {}", r.ata_last_error));
         }
-        add(WARN, msg);
+        if errors_are_stale(r) {
+            msg.push_str(" (old: a self-test has passed since and none in the last 30 days)");
+            add(OK, msg);
+        } else {
+            add(WARN, msg);
+        }
     }
 
     if let Some(w) = r.nvme_critical_warning.filter(|w| *w != 0) {

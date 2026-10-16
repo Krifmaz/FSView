@@ -66,7 +66,7 @@ export default function HealthPage() {
                   {d.health?.standby && <div className="dim">in standby (last data kept)</div>}
                   {d.health?.error && <div style={{ color: "var(--crit)" }}>{d.health.error}</div>}
                   {(d.health?.findings ?? []).map((f) => (
-                    <div key={f.text} style={{ color: f.level === "crit" ? "var(--crit)" : "var(--warn)" }}>
+                    <div key={f.text} className={f.level === "ok" ? "dim" : undefined} style={f.level === "ok" ? undefined : { color: f.level === "crit" ? "var(--crit)" : "var(--warn)" }}>
                       {f.text}
                     </div>
                   ))}

@@ -67,6 +67,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/disks/{name}/check", post(fs_check))
         .route("/api/disks/{name}/locate", post(locate))
         .route("/api/disks/{name}/label", post(relabel))
+        .route("/api/disks/{name}/acknowledge", post(acknowledge))
         .fallback(|| async { err(StatusCode::NOT_FOUND, "not_found", "no such endpoint") })
         .layer(middleware::from_fn(csrf));
     Router::new()
@@ -611,6 +612,64 @@ async fn enclosure_ignore(
         Ok(()) => ok(json!({"ignored_elements": s.ignored_elements})),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", e),
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AckBody {
+    /// true: acknowledge the current error counts; false: forget them.
+    acknowledge: bool,
+}
+
+/// Records a disk's current SMART error-log and CRC counts so only new
+/// errors warn. These counters never reset on the drive itself.
+async fn acknowledge(
+    State(app): AppState,
+    _u: User,
+    Path(name): Path<String>,
+    JsonBody(b): JsonBody<AckBody>,
+) -> Response {
+    let d = match find_disk(&app, &name).await {
+        Ok(d) => d,
+        Err(r) => return *r,
+    };
+    let Some(rep) = app.smart_for(&d.name).and_then(|e| e.report) else {
+        return err(
+            StatusCode::CONFLICT,
+            "no_smart",
+            "no SMART data for this disk yet",
+        );
+    };
+    if rep.serial.is_empty() {
+        return err(
+            StatusCode::CONFLICT,
+            "no_serial",
+            "the disk reports no serial number",
+        );
+    }
+    let mut s = app.store.settings();
+    if b.acknowledge {
+        if s.acknowledged.len() >= 500 && !s.acknowledged.contains_key(&rep.serial) {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "too many acknowledged disks",
+            );
+        }
+        s.acknowledged.insert(
+            rep.serial.clone(),
+            smart::Ack {
+                ata_errors: rep.ata_error_count.unwrap_or(0),
+                crc_errors: rep.crc_errors.unwrap_or(0),
+            },
+        );
+    } else {
+        s.acknowledged.remove(&rep.serial);
+    }
+    if let Err(e) = app.store.set_settings(s) {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", e);
+    }
+    ok(json!({"disk": disk_view(&app, &d), "smart": app.smart_for(&d.name)}))
 }
 
 fn name_re() -> &'static Regex {
@@ -1217,6 +1276,8 @@ async fn put_settings(
 ) -> Response {
     // Managed through /api/enclosures/ignore.
     v.ignored_elements = app.store.settings().ignored_elements;
+    // Managed through /api/disks/{name}/acknowledge.
+    v.acknowledged = app.store.settings().acknowledged;
     let t = v.thresholds;
     let bad = |m: &str| err(StatusCode::BAD_REQUEST, "bad_request", m);
     if t.temp_warn_c < 20

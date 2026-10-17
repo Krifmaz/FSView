@@ -142,7 +142,9 @@ fn lifetime_traffic_and_life() {
         (failing.level.as_str(), failing.remaining_pct),
         (CRIT, Some(0))
     );
-    assert_eq!(lifespan(&hdd, WARN).remaining_pct, None);
+    let warn = lifespan(&hdd, WARN);
+    assert!(warn.upper_bound);
+    assert_eq!(warn.remaining_pct, lifespan(&hdd, OK).remaining_pct);
 
     let nvme = load("smart_nvme0n1.json", "");
     assert_eq!(nvme.written_bytes, Some(45_543_999 * 512_000));
@@ -197,4 +199,43 @@ fn old_error_log_with_later_passing_test_is_not_a_warning() {
     r.ata_last_error_hours = Some(673);
     r.self_tests[0].lifetime_hours = Some(600);
     assert_eq!(evaluate(&r, &Thresholds::default()).status, WARN);
+}
+
+#[test]
+fn acknowledged_errors_only_warn_when_new() {
+    let r = Report {
+        power_on_hours: Some(100),
+        ata_error_count: Some(4),
+        ata_last_error_hours: Some(90),
+        crc_errors: Some(3),
+        passed: Some(true),
+        smart_available: true,
+        ..Default::default()
+    };
+    let t = Thresholds::default();
+    let a = evaluate(&r, &t);
+    assert_eq!(a.status, WARN);
+    assert!(a.findings.iter().all(|f| f.ackable));
+
+    let ack = Ack {
+        ata_errors: 4,
+        crc_errors: 3,
+    };
+    let a = evaluate_with(&r, &t, Some(&ack));
+    assert_eq!(a.status, OK, "{:?}", a.findings);
+    assert!(a
+        .findings
+        .iter()
+        .all(|f| f.text.ends_with("(acknowledged)") && !f.ackable));
+
+    let newer = Report {
+        ata_error_count: Some(6),
+        ..r
+    };
+    let a = evaluate_with(&newer, &t, Some(&ack));
+    assert_eq!(a.status, WARN);
+    assert!(a
+        .findings
+        .iter()
+        .any(|f| f.text.contains("2 new since acknowledged")));
 }

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::auth;
-use crate::smart::Thresholds;
+use crate::smart::{Ack, Thresholds};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -37,6 +37,8 @@ pub struct Settings {
     /// without a confirmation dialog. Destructive ones always need the
     /// typed confirmation.
     pub skip_confirm: bool,
+    /// Acknowledged SMART error counts by disk serial number.
+    pub acknowledged: HashMap<String, Ack>,
 }
 
 impl Default for Settings {
@@ -47,6 +49,7 @@ impl Default for Settings {
             event_retention: 20000,
             ignored_elements: vec![],
             skip_confirm: false,
+            acknowledged: HashMap::new(),
         }
     }
 }

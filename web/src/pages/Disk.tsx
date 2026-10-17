@@ -112,6 +112,18 @@ export default function DiskPage({ name }: { name: string }) {
     }
   };
 
+  const acknowledge = async (on: boolean) => {
+    setRefreshing(true);
+    try {
+      const res = await api.post<DiskDetail>(`/api/disks/${d.name}/acknowledge`, { acknowledge: on });
+      setData((prev) => ({ ...(prev as DiskDetail), ...res }));
+    } catch (e: any) {
+      setMsg({ kind: "error", text: e.message });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const startTest = (test: "short" | "long" | "abort") => st.start([d], test, test === "short" ? r?.short_test_minutes : test === "long" ? r?.long_test_minutes : undefined);
 
   const loadRaw = async () => {
@@ -260,7 +272,19 @@ export default function DiskPage({ name }: { name: string }) {
         <>
           {(sm?.assessment.findings ?? []).map((f) => (
             <div key={f.text} className={`alert ${f.level === "crit" ? "error" : f.level === "ok" ? "info" : "warn"}`}>
-              {f.text}
+              <div className="between" style={{ width: "100%" }}>
+                <span>{f.text}</span>
+                {f.ackable && (
+                  <button className="btn sm" disabled={refreshing} onClick={() => acknowledge(true)} title="Hide the errors already logged; new errors warn again">
+                    Acknowledge
+                  </button>
+                )}
+                {f.text.endsWith("(acknowledged)") && (
+                  <button className="btn ghost sm" disabled={refreshing} onClick={() => acknowledge(false)}>
+                    Undo
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           {(r.messages ?? [])

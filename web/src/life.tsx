@@ -25,7 +25,8 @@ export function LifeCell({ life }: { life?: Life }) {
             <div style={{ width: `${Math.max(2, life.remaining_pct)}%` }} />
           </div>
           <span className="dim">
-            ~{life.remaining_pct}% left{life.remaining_hours ? ` · ${fmtDuration(life.remaining_hours)}` : ""}
+            {life.upper_bound ? "at most " : "~"}
+            {life.remaining_pct}% left{life.remaining_hours ? ` · ${fmtDuration(life.remaining_hours)}` : ""}
           </span>
         </div>
       )}
@@ -61,8 +62,9 @@ export function LifeCard({ life, rotational }: { life?: Life; rotational: boolea
             <div style={{ width: `${Math.max(1, life.remaining_pct)}%` }} />
           </div>
           <div className="small dim" style={{ marginTop: 4 }}>
-            Estimated <b style={{ color: "var(--text)" }}>{life.remaining_pct}%</b> of life left
-            {life.remaining_hours !== undefined && life.remaining_hours > 0 && <> · about {fmtDuration(life.remaining_hours)} of power-on time</>}
+            {life.upper_bound ? "At most" : "Estimated"} <b style={{ color: "var(--text)" }}>{life.remaining_pct}%</b> of life left
+            {life.remaining_hours !== undefined && life.remaining_hours > 0 && <> · {life.upper_bound ? "up to" : "about"} {fmtDuration(life.remaining_hours)} of power-on time</>}
+            {life.upper_bound && <div>Best case from its age. The errors below mean it will likely fail sooner.</div>}
           </div>
         </div>
       )}

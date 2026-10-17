@@ -285,7 +285,7 @@ impl App {
         )
         .await;
         let now = Utc::now();
-        let thresholds = self.store.settings().thresholds;
+        let settings = self.store.settings();
         let mut m = self.smart.lock().unwrap();
         let mut e = m.get(dev).cloned().unwrap_or_default();
         e.checked_at = Some(now);
@@ -313,7 +313,7 @@ impl App {
         e.assessment = e
             .report
             .as_ref()
-            .map(|r| smart::evaluate(r, &thresholds))
+            .map(|r| eval_report(r, &settings))
             .unwrap_or_default();
         e.life = e
             .report
@@ -327,7 +327,7 @@ impl App {
     pub fn smart_for(&self, dev: &str) -> Option<SmartEntry> {
         let mut e = self.smart.lock().unwrap().get(dev).cloned()?;
         if let Some(r) = &e.report {
-            e.assessment = smart::evaluate(r, &self.store.settings().thresholds);
+            e.assessment = eval_report(r, &self.store.settings());
             e.life = Some(smart::lifespan(r, &e.assessment.status));
         }
         Some(e)
@@ -440,3 +440,9 @@ impl App {
 
 #[cfg(test)]
 mod tests;
+
+/// Evaluates a SMART report with the user's thresholds and acknowledged
+/// error counts.
+fn eval_report(r: &smart::Report, s: &crate::store::Settings) -> smart::Assessment {
+    smart::evaluate_with(r, &s.thresholds, s.acknowledged.get(&r.serial))
+}

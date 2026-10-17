@@ -62,6 +62,24 @@ fn errors_are_stale(r: &Report) -> bool {
 pub struct Finding {
     pub level: String,
     pub text: String,
+    /// A cumulative counter (error log, CRC errors) the user can
+    /// acknowledge so only new errors warn.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ackable: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+/// Error counts the user acknowledged for one disk. Drives never reset
+/// these counters, so acknowledged errors are shown as history and only
+/// errors beyond these counts warn.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Ack {
+    pub ata_errors: i64,
+    pub crc_errors: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -100,12 +118,20 @@ pub fn worse<'a>(a: &'a str, b: &'a str) -> &'a str {
 
 /// Checks a report against thresholds.
 pub fn evaluate(r: &Report, t: &Thresholds) -> Assessment {
+    evaluate_with(r, t, None)
+}
+
+/// Like `evaluate`, with the user's acknowledged error counts.
+pub fn evaluate_with(r: &Report, t: &Thresholds, ack: Option<&Ack>) -> Assessment {
+    let ack = ack.copied().unwrap_or_default();
+    let mut ackable: Vec<String> = vec![];
     if !r.smart_available {
         return Assessment {
             status: UNKNOWN.into(),
             findings: vec![Finding {
                 level: UNKNOWN.into(),
                 text: "SMART not available".into(),
+                ackable: false,
             }],
         };
     }
@@ -117,6 +143,7 @@ pub fn evaluate(r: &Report, t: &Thresholds) -> Assessment {
         a.findings.push(Finding {
             level: level.into(),
             text,
+            ackable: false,
         });
         a.status = worse(&a.status, level).to_string();
     };
@@ -212,10 +239,16 @@ pub fn evaluate(r: &Report, t: &Thresholds) -> Assessment {
         "uncorrected read/write errors",
     );
     if let Some(c) = r.crc_errors.filter(|c| t.crc_warn > 0 && *c >= t.crc_warn) {
-        add(
-            WARN,
-            format!("interface CRC errors: {c} (check cable/backplane)"),
-        );
+        if ack.crc_errors > 0 && c <= ack.crc_errors {
+            add(OK, format!("interface CRC errors: {c} (acknowledged)"));
+        } else {
+            let mut msg = format!("interface CRC errors: {c} (check cable/backplane)");
+            if ack.crc_errors > 0 {
+                msg.push_str(&format!(", {} new since acknowledged", c - ack.crc_errors));
+            }
+            ackable.push(msg.clone());
+            add(WARN, msg);
+        }
     }
     if let Some(n) = r
         .ata_error_count
@@ -229,10 +262,18 @@ pub fn evaluate(r: &Report, t: &Thresholds) -> Assessment {
             }
             msg.push_str(&format!(": {}", r.ata_last_error));
         }
-        if errors_are_stale(r) {
+        if ack.ata_errors > 0 && n <= ack.ata_errors {
+            msg.push_str(" (acknowledged)");
+            add(OK, msg);
+        } else if errors_are_stale(r) {
             msg.push_str(" (old: a self-test has passed since and none in the last 30 days)");
+            ackable.push(msg.clone());
             add(OK, msg);
         } else {
+            if ack.ata_errors > 0 {
+                msg.push_str(&format!(" ({} new since acknowledged)", n - ack.ata_errors));
+            }
+            ackable.push(msg.clone());
             add(WARN, msg);
         }
     }
@@ -276,6 +317,9 @@ pub fn evaluate(r: &Report, t: &Thresholds) -> Assessment {
             add(CRIT, msg);
         }
     }
+    for f in &mut a.findings {
+        f.ackable = ackable.contains(&f.text);
+    }
     a
 }
 
@@ -305,6 +349,10 @@ pub struct Life {
     /// Flash only: writes left at the current wear rate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remaining_written_bytes: Option<u64>,
+    /// The age-based estimate is only a ceiling: health findings mean the
+    /// disk will likely fail sooner.
+    #[serde(skip_serializing_if = "is_false")]
+    pub upper_bound: bool,
     /// How the estimate was made.
     pub basis: String,
     /// ok | warn | crit
@@ -366,9 +414,8 @@ pub fn lifespan(r: &Report, status: &str) -> Life {
         l.remaining_pct = Some(0);
         l.remaining_hours = Some(0);
         l.remaining_written_bytes = None;
-    } else if status == WARN && !flash {
-        l.remaining_pct = None;
-        l.remaining_hours = None;
+    } else if status == WARN && !flash && l.remaining_pct.is_some() {
+        l.upper_bound = true;
     }
     l.level = level.into();
     l.verdict = verdict.into();

@@ -52,6 +52,8 @@ export interface Topology {
 export interface Finding {
   level: Status;
   text: string;
+  /** A cumulative error counter that can be acknowledged. */
+  ackable?: boolean;
 }
 
 export interface Running {
@@ -232,6 +234,8 @@ export interface Life {
   remaining_pct?: number;
   remaining_hours?: number;
   remaining_written_bytes?: number;
+  /** Errors present: the estimate is a best case. */
+  upper_bound?: boolean;
   basis: string;
   level: "ok" | "warn" | "crit";
   verdict: string;

@@ -4,8 +4,8 @@
 mod eval;
 
 pub use eval::{
-    evaluate, lifespan, worse, Assessment, Finding, Life, Thresholds, CRIT, HDD_DESIGN_HOURS, OK,
-    UNKNOWN, WARN,
+    evaluate, evaluate_with, lifespan, worse, Ack, Assessment, Finding, Life, Thresholds, CRIT,
+    HDD_DESIGN_HOURS, OK, UNKNOWN, WARN,
 };
 
 use serde::{Deserialize, Serialize};

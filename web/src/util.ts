@@ -116,3 +116,16 @@ export function fmtDuration(h?: number | null): string {
   const d = Math.round(h / 24);
   return `${d} day${d === 1 ? "" : "s"}`;
 }
+
+/** Filesystem labels and mountpoints on a disk (whole-disk or partitions). */
+export function diskNames(d: Disk): { labels: string[]; mounts: string[] } {
+  const labels: string[] = [];
+  const mounts: string[] = [];
+  const walk = (n: { label?: string; mountpoints?: string[]; children?: Node[] }) => {
+    if (n.label && !labels.includes(n.label)) labels.push(n.label);
+    for (const m of n.mountpoints ?? []) if (m && !mounts.includes(m)) mounts.push(m);
+    n.children?.forEach(walk);
+  };
+  walk(d);
+  return { labels, mounts };
+}

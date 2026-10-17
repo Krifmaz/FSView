@@ -1,7 +1,7 @@
 import { api } from "../api";
 import { ErrorBox, Loading, ProtectedBadge, StatusBadge, Temp, UsageBar } from "../components";
 import type { BootReport, Disk, Enclosure, Overview } from "../types";
-import { diskFilesystems, fmtBytes, slotLabel, timeAgo, useFetch } from "../util";
+import { diskFilesystems, diskNames, fmtBytes, slotLabel, timeAgo, useFetch } from "../util";
 
 function go(d: Disk) {
   window.location.hash = `#/disk/${d.name}`;
@@ -216,6 +216,7 @@ export default function OverviewPage() {
                       <a href={`#/disk/${d.name}`} className="mono" onClick={(e) => e.stopPropagation()}>
                         {d.name}
                       </a>
+                      {diskNames(d).labels.length > 0 && <div><b>{diskNames(d).labels.join(", ")}</b></div>}
                       <div className="small dim">{slotLabel(d)}</div>
                       <ProtectedBadge disk={d} />
                     </td>
@@ -249,6 +250,7 @@ export default function OverviewPage() {
                 <div className="between">
                   <div className="row">
                     <b className="mono">{d.name}</b>
+                    {diskNames(d).labels.length > 0 && <b>{diskNames(d).labels.join(", ")}</b>}
                     <span className="dim small">{slotLabel(d)}</span>
                   </div>
                   <div className="row">

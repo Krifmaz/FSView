@@ -1,7 +1,7 @@
 import { api } from "../api";
 import { ErrorBox, Loading, StatusBadge, Temp } from "../components";
 import type { Overview } from "../types";
-import { fmtBytes, fmtHours, slotLabel, timeAgo, useFetch } from "../util";
+import { diskNames, fmtBytes, fmtHours, slotLabel, timeAgo, useFetch } from "../util";
 import { useSelfTest } from "../selftest";
 import { LifeCell } from "../life";
 
@@ -53,6 +53,16 @@ export default function HealthPage() {
                 </td>
                 <td>
                   <span className="mono">{d.name}</span> <span className="dim small">{slotLabel(d)}</span>
+                  {(() => {
+                    const n = diskNames(d);
+                    return (
+                      (n.labels.length > 0 || n.mounts.length > 0) && (
+                        <div>
+                          {n.labels.length > 0 && <b>{n.labels.join(", ")}</b>} {n.mounts.length > 0 && <span className="mono small dim">{n.mounts.join(", ")}</span>}
+                        </div>
+                      )
+                    );
+                  })()}
                   <div className="small">
                     {d.display_model} · {fmtBytes(d.size_bytes)}
                   </div>

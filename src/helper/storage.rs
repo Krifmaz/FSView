@@ -398,7 +398,7 @@ impl Server {
             c.push(t.into());
             c
         };
-        actions.push(Action::Run(cmd));
+        actions.push(Action::Run(own_scope(cmd)));
         let rejoin = !reattach.is_empty();
         actions.extend(reattach);
         Ok(Plan {
@@ -933,6 +933,22 @@ fn settle() -> Option<Action> {
             "--timeout=30".into(),
         ])
     })
+}
+
+/// Runs a mount command in its own transient systemd scope. FUSE
+/// filesystems (mergerfs, ntfs-3g) leave a daemon running; started from
+/// the helper it would sit in fsview-helper's cgroup and be killed when the
+/// helper restarts, e.g. on an FSView upgrade, taking the mount down.
+fn own_scope(cmd: Vec<String>) -> Vec<String> {
+    if !Path::new("/run/systemd/system").exists() || !tool_exists("systemd-run") {
+        return cmd;
+    }
+    let mut c: Vec<String> = ["systemd-run", "--scope", "--quiet", "--collect", "--"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    c.extend(cmd);
+    c
 }
 
 #[cfg(test)]

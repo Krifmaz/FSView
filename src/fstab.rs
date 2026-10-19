@@ -720,7 +720,10 @@ pub fn parse_verify(stdout: &str, stderr: &str, doc: &Doc, will_create: &[String
             || (fuse
                 && (msg.contains("seems unsupported by the current kernel")
                     || msg.contains("non-bind mount source")
-                    || msg.contains("cannot detect on-disk filesystem type")))
+                    || msg.contains("cannot detect on-disk filesystem type")
+                    // mergerfs branch modes ("/mnt/disk=NC") look like a
+                    // LABEL=/UUID= tag to findmnt.
+                    || msg.contains("unsupported source tag")))
             || (will_create.iter().any(|w| w == &target)
                 && msg.starts_with("unreachable on boot required target"));
         let full = format!("{target}: {msg}");
@@ -910,7 +913,7 @@ mod tests {
     #[test]
     fn verify_parsing() {
         let doc = parse("UUID=x /mnt/x ext4 defaults,nofail 0 2\n/mnt/a /mnt/pool fuse.mergerfs allow_other 0 0\n");
-        let out = "/mnt/x\n   [E] unreachable on boot required target: No such file or directory\n   [ ] userspace options: nofail\n   [E] unreachable on boot required source: UUID=x\n/mnt/pool\n   [W] unreachable source: /mnt/a: No such file or directory\n   [W] fuse.mergerfs seems unsupported by the current kernel\n   [W] cannot detect on-disk filesystem type (No such file or directory)\n\n0 parse errors, 0 errors, 1 warning\n";
+        let out = "/mnt/x\n   [E] unreachable on boot required target: No such file or directory\n   [ ] userspace options: nofail\n   [E] unreachable on boot required source: UUID=x\n/mnt/pool\n   [W] unreachable source: /mnt/a: No such file or directory\n   [W] fuse.mergerfs seems unsupported by the current kernel\n   [W] cannot detect on-disk filesystem type (No such file or directory)\n   [E] unsupported source tag: /mnt/a:/mnt/b=NC\n\n0 parse errors, 0 errors, 1 warning\n";
         let v = parse_verify(
             out,
             "findmnt: f: parse error at line 3 -- ignored\n1 parse error, 2 errors, 3 warnings\n",
@@ -928,7 +931,7 @@ mod tests {
             v.warnings,
             vec!["/mnt/pool: unreachable source: /mnt/a: No such file or directory"]
         );
-        assert_eq!(v.ignored.len(), 3);
+        assert_eq!(v.ignored.len(), 4);
         assert!(!v.ok);
         assert!(
             creatable_mountpoint("/mnt/media7")

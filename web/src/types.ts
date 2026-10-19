@@ -490,6 +490,8 @@ export interface StorageEntry {
 
 export interface PoolBranch {
   path: string;
+  /** mergerfs branch mode: "" (read-write), "NC" (no new files) or "RO". */
+  mode?: string;
   mount?: string | null;
   mounted: boolean;
   usage?: UsageInfo | null;

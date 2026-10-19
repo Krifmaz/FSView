@@ -247,6 +247,19 @@ pub fn mergerfs_branches(e: &FsEntry) -> Vec<String> {
         .collect()
 }
 
+/// Branch paths with their mergerfs mode suffix (e.g. "NC" from
+/// "/mnt/disk=NC"), empty when none is set.
+pub fn mergerfs_branch_modes(e: &FsEntry) -> Vec<(String, String)> {
+    e.spec
+        .trim_start_matches("mergerfs#")
+        .split(':')
+        .filter_map(|b| {
+            let (p, m) = b.split_once('=').unwrap_or((b, ""));
+            (!p.is_empty()).then(|| (p.to_string(), m.to_string()))
+        })
+        .collect()
+}
+
 pub fn is_mergerfs(e: &FsEntry) -> bool {
     e.vfstype == "fuse.mergerfs" || (e.vfstype == "fuse" && e.spec.starts_with("mergerfs#"))
 }
@@ -323,6 +336,9 @@ impl Server {
         let mounts = self.mounts()?;
         let reattach = self.reattach_actions(&entries, &mounts, t);
         if mounts.iter().any(|m| m.target == t) {
+            if reattach.is_empty() && is_mergerfs(e) {
+                return self.apply_pool_live(e, &entries, &mounts);
+            }
             if reattach.is_empty() {
                 return Err(bad(format!("{t} is already mounted")));
             }
@@ -339,24 +355,7 @@ impl Server {
             }
             // The pool must never mount on top of missing branches: writes
             // would land on the disk underneath.
-            for b in mergerfs_branches(e) {
-                let owner = entries
-                    .iter()
-                    .filter(|o| o.file != "/" && o.file != t && o.vfstype != "swap")
-                    .filter(|o| b == o.file || b.starts_with(&format!("{}/", o.file)))
-                    .max_by_key(|o| o.file.len());
-                if let Some(o) = owner {
-                    if !mounts.iter().any(|m| m.target == o.file) {
-                        return Err(bad(format!(
-                            "branch {b} is on {} which is not mounted; mount it first",
-                            o.file
-                        )));
-                    }
-                }
-                if !b.contains('*') && !Path::new(&b).is_dir() {
-                    return Err(bad(format!("branch {b} does not exist")));
-                }
-            }
+            check_branches(e, &entries, &mounts)?;
         }
         let mut actions = vec![];
         if !Path::new(t).exists() {
@@ -933,6 +932,75 @@ fn settle() -> Option<Action> {
             "--timeout=30".into(),
         ])
     })
+}
+
+/// Every branch of a pool must exist and sit on a mounted filesystem;
+/// otherwise writes would land on the disk underneath the mountpoint.
+fn check_branches(e: &FsEntry, entries: &[FsEntry], mounts: &[Mount]) -> Result<(), OpError> {
+    for b in mergerfs_branches(e) {
+        let owner = entries
+            .iter()
+            .filter(|o| o.file != "/" && o.file != e.file && o.vfstype != "swap")
+            .filter(|o| b == o.file || b.starts_with(&format!("{}/", o.file)))
+            .max_by_key(|o| o.file.len());
+        if let Some(o) = owner {
+            if !mounts.iter().any(|m| m.target == o.file) {
+                return Err(bad(format!(
+                    "branch {b} is on {} which is not mounted; mount it first",
+                    o.file
+                )));
+            }
+        }
+        if !b.contains('*') && !Path::new(&b).is_dir() {
+            return Err(bad(format!("branch {b} does not exist")));
+        }
+    }
+    Ok(())
+}
+
+impl Server {
+    /// Applies a mounted pool's fstab settings (branches with their modes,
+    /// create policy, minfreespace, moveonenospc) to the running mergerfs
+    /// without unmounting it, so programs using the pool keep working.
+    fn apply_pool_live(
+        &self,
+        e: &FsEntry,
+        entries: &[FsEntry],
+        mounts: &[Mount],
+    ) -> Result<Plan, OpError> {
+        if !tool_exists("setfattr") {
+            return Err(bad("setfattr is not installed (apt install attr)"));
+        }
+        check_branches(e, entries, mounts)?;
+        let t = e.file.as_str();
+        let branches: Vec<String> = e
+            .spec
+            .trim_start_matches("mergerfs#")
+            .split(':')
+            .filter(|b| !b.is_empty())
+            .map(str::to_string)
+            .collect();
+        let mut actions = vec![set_branches(t, &branches)];
+        for opt in e.options.split(',') {
+            let (k, v) = opt.split_once('=').unwrap_or((opt, "true"));
+            if ["category.create", "minfreespace", "moveonenospc"].contains(&k) {
+                actions.push(Action::Run(vec![
+                    "setfattr".into(),
+                    "-n".into(),
+                    format!("user.mergerfs.{k}"),
+                    "-v".into(),
+                    v.into(),
+                    format!("{t}/.mergerfs"),
+                ]));
+            }
+        }
+        Ok(Plan {
+            targets: vec![t.into()],
+            actions,
+            summary: format!("apply the fstab settings to the running pool {t}"),
+            detail: String::new(),
+        })
+    }
 }
 
 /// Runs a mount command in its own transient systemd scope. FUSE

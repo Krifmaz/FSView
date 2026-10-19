@@ -31,6 +31,8 @@ interface Form {
   original?: string;
   mountpoint: string;
   branches: string[];
+  /** Branch path -> mergerfs mode (NC, RO); missing means read-write. */
+  modes: Record<string, string>;
   policy: string;
   minfree: string;
   cache: string;
@@ -56,6 +58,7 @@ function formFromPool(p: Pool): Form {
     original: p.file,
     mountpoint: p.file,
     branches: p.branches.map((b) => b.path),
+    modes: Object.fromEntries(p.branches.filter((b) => b.mode && b.mode !== "RW").map((b) => [b.path, b.mode as string])),
     policy: get("category.create") ?? "epmfs",
     minfree: get("minfreespace") ?? "",
     cache: get("cache.files") ?? "off",
@@ -92,7 +95,8 @@ function buildEntry(f: Form, entries: StorageEntry[]): FsEntry {
     "nofail",
     ...req.map((m) => `x-systemd.requires-mounts-for=${m}`),
   ];
-  return { spec: f.branches.join(":"), file: f.mountpoint, vfstype: "fuse.mergerfs", options: [...new Set(opts)].join(","), freq: 0, passno: 0 };
+  const spec = f.branches.map((b) => (f.modes[b] ? `${b}=${f.modes[b]}` : b)).join(":");
+  return { spec, file: f.mountpoint, vfstype: "fuse.mergerfs", options: [...new Set(opts)].join(","), freq: 0, passno: 0 };
 }
 
 function withEntry(doc: FstabDoc, original: string | undefined, e: FsEntry | null): FstabDoc {
@@ -116,6 +120,8 @@ function PoolEditor({ form, data, onClose, onSaved }: { form: Form; data: Storag
   const candidates = data.entries.filter((e) => !e.pool && !e.system && e.vfstype !== "swap" && e.file.startsWith("/"));
   const editing = !!form.original;
   const wasMounted = editing && data.pools.find((p) => p.file === form.original)?.mounted;
+  // Same mountpoint: the running pool takes the new settings live (no unmount).
+  const live = wasMounted && f.mountpoint === form.original;
 
   const toggle = (p: string) => setF({ ...f, branches: f.branches.includes(p) ? f.branches.filter((b) => b !== p) : [...f.branches, p] });
   const move = (i: number, d: number) => {
@@ -160,11 +166,11 @@ function PoolEditor({ form, data, onClose, onSaved }: { form: Form; data: Storag
       let msg = `Pool ${f.mountpoint} saved to fstab (backup made).`;
       if (f.mountNow) {
         try {
-          if (wasMounted) {
+          if (wasMounted && !live) {
             await api.post("/api/mounts/umount", { target: f.original, confirmed: true });
           }
           await api.post("/api/mounts/mount", { target: f.mountpoint, confirmed: true });
-          msg += wasMounted ? " Remounted with the new settings." : " Mounted.";
+          msg += live ? " Applied to the running pool." : wasMounted ? " Remounted with the new settings." : " Mounted.";
         } catch (e) {
           msg += ` Not ${wasMounted ? "remounted" : "mounted"}: ${explainError(e)}`;
         }
@@ -233,6 +239,21 @@ function PoolEditor({ form, data, onClose, onSaved }: { form: Form; data: Storag
                       {!ownerOf(b, data.entries, f.mountpoint) && <span style={{ color: "var(--warn)" }}> · not on a disk in fstab</span>}
                     </span>
                     <span className="row" style={{ gap: 4 }}>
+                      <select
+                        className="sm"
+                        value={f.modes[b] ?? ""}
+                        title="Normal: read and write. No new files: existing files stay readable and editable, new files go elsewhere. Read-only: nothing is written."
+                        onChange={(e) => {
+                          const modes = { ...f.modes };
+                          if (e.target.value) modes[b] = e.target.value;
+                          else delete modes[b];
+                          setF({ ...f, modes });
+                        }}
+                      >
+                        <option value="">Normal</option>
+                        <option value="NC">No new files</option>
+                        <option value="RO">Read-only</option>
+                      </select>
                       <button className="btn ghost sm" onClick={() => move(i, -1)} disabled={i === 0}>
                         ↑
                       </button>
@@ -283,7 +304,7 @@ function PoolEditor({ form, data, onClose, onSaved }: { form: Form; data: Storag
             </label>
             <label className="check">
               <input type="checkbox" checked={f.mountNow} onChange={(e) => setF({ ...f, mountNow: e.target.checked })} />
-              {wasMounted ? "Remount now so the changes take effect" : "Mount the pool now"}
+              {live ? "Apply the changes to the running pool now (no unmount)" : wasMounted ? "Remount now so the changes take effect" : "Mount the pool now"}
             </label>
             <div className="small dim">
               FSView adds <span className="mono">nofail</span> and <span className="mono">x-systemd.requires-mounts-for</span> for every disk, so the pool never mounts without its disks and never
@@ -321,7 +342,7 @@ function PoolEditor({ form, data, onClose, onSaved }: { form: Form; data: Storag
               <>
                 <div className="small dim">Will run</div>
                 <div className="plan">
-                  {[...preview.plan, ...(f.mountNow ? [...(wasMounted ? [`umount ${form.original}`] : []), `mount ${f.mountpoint}`] : [])].join("\n")}
+                  {[...preview.plan, ...(f.mountNow ? (live ? [`apply branches and policy to the running ${f.mountpoint} (setfattr, no unmount)`] : [...(wasMounted ? [`umount ${form.original}`] : []), `mount ${f.mountpoint}`]) : [])].join("\n")}
                 </div>
               </>
             )}
@@ -347,7 +368,7 @@ export default function PoolsPage() {
   const health = useHealthMap();
   const [editor, setEditor] = useState<Form | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  const newForm = useMemo<Form>(() => ({ mountpoint: "/mnt/pool", branches: [], policy: "mfs", minfree: "20G", cache: "off", moveonenospc: true, extra: "", mountNow: true }), []);
+  const newForm = useMemo<Form>(() => ({ mountpoint: "/mnt/pool", branches: [], modes: {}, policy: "mfs", minfree: "20G", cache: "off", moveonenospc: true, extra: "", mountNow: true }), []);
   if (loading && !data) return <Loading />;
   if (!data) return <ErrorBox error={error} />;
 
@@ -476,7 +497,10 @@ export default function PoolsPage() {
                       const owner = data.entries.find((e) => e.file === b.mount);
                       return (
                         <tr key={b.path}>
-                          <td className="mono">{b.path}</td>
+                          <td className="mono">
+                            {b.path}
+                            {b.mode && b.mode !== "RW" && <span className="badge neutral" style={{ marginLeft: 6 }}>{b.mode === "NC" ? "no new files" : b.mode === "RO" ? "read-only" : b.mode}</span>}
+                          </td>
                           <td className="small">
                             {owner?.device ? (
                               <span className="row" style={{ gap: 6 }}>

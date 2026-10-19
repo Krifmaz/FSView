@@ -1043,7 +1043,7 @@ async fn storage(State(app): AppState, _u: User) -> Response {
 
 pub(crate) fn storage_view(fs: &FstabState, ms: &[MountInfo], st: Option<&StatusResult>) -> Value {
     use crate::fstab::Line;
-    use crate::helper::{is_mergerfs, mergerfs_branches};
+    use crate::helper::{is_mergerfs, mergerfs_branch_modes};
     let entries: Vec<(usize, &crate::fstab::FsEntry)> = fs
         .doc
         .lines
@@ -1103,13 +1103,14 @@ pub(crate) fn storage_view(fs: &FstabState, ms: &[MountInfo], st: Option<&Status
             "pool": pool,
         });
         if pool {
-            let branches: Vec<Value> = mergerfs_branches(e)
+            let branches: Vec<Value> = mergerfs_branch_modes(e)
                 .into_iter()
-                .map(|b| {
+                .map(|(b, mode)| {
                     let on = owner(&b, &e.file);
                     let bm = on.as_deref().and_then(mount_of);
                     json!({
                         "path": b,
+                        "mode": mode,
                         "mount": on,
                         "mounted": on.is_none() || bm.is_some(),
                         "usage": usage(bm),

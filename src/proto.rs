@@ -20,6 +20,9 @@ pub const OP_FSTAB_ROLLBACK: &str = "fstab.rollback";
 pub const OP_MOUNTS_LIST: &str = "mounts.list";
 pub const OP_MOUNT: &str = "mount";
 pub const OP_UMOUNT: &str = "umount";
+/// Makes the empty directories under data mounts immutable, so nothing can
+/// be written into them while their disk is not mounted.
+pub const OP_PROTECT_MOUNTPOINTS: &str = "mountpoints.protect";
 pub const OP_FS_FORMAT: &str = "fs.format";
 pub const OP_FS_CHECK: &str = "fs.check";
 pub const OP_FS_REPAIR: &str = "fs.repair";

@@ -433,7 +433,7 @@ pub fn analyze(d: &Data, inv: Option<&Inventory>) -> Report {
             dep_failed[i] = true;
             if r.mounted {
                 r.problems.push(format!("branch {b} is not mounted, but this pool is: files written to the pool land in the empty {dep_mp} directory on the filesystem underneath (usually the root disk)"));
-                r.hints.push(format!("Use a subdirectory that only exists on the mounted disk as the branch (e.g. {}/data) and add x-systemd.requires-mounts-for={dep_mp} to this entry.", dep_mp.trim_end_matches('/')));
+                r.hints.push(format!("Use a subdirectory that only exists on the mounted disk as the branch (e.g. {}/data) or protect the mountpoints (FSView Pools → Protect mountpoints), and add x-systemd.wants-mounts-for={dep_mp} to this entry.", dep_mp.trim_end_matches('/')));
             } else {
                 r.problems
                     .push(format!("depends on {dep_mp}, which is not mounted"));

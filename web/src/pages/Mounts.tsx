@@ -42,7 +42,10 @@ function moveMountpoint(doc: FstabDoc, from: string, to: string): FstabDoc {
         spec: pool ? e.spec.split(":").map((b) => { const [p, mode] = b.split("="); return sw(p) + (mode ? `=${mode}` : ""); }).join(":") : e.spec,
         options: e.options
           .split(",")
-          .map((o) => (o.startsWith("x-systemd.requires-mounts-for=") ? `x-systemd.requires-mounts-for=${sw(o.split("=")[1])}` : o))
+          .map((o) => {
+            const k = ["x-systemd.requires-mounts-for", "x-systemd.wants-mounts-for"].find((p) => o.startsWith(p + "="));
+            return k ? `${k}=${sw(o.slice(k.length + 1))}` : o;
+          })
           .join(","),
       };
       return JSON.stringify(next) === JSON.stringify(e) ? l : { kind: "entry" as const, raw: "", entry: next };

@@ -604,7 +604,9 @@ pub fn validate(doc: &Doc, ctx: &Context) -> Vec<Issue> {
                 .collect();
             let requires: Vec<String> = opts
                 .iter()
-                .filter(|(k, _)| k == "x-systemd.requires-mounts-for")
+                .filter(|(k, _)| {
+                    k == "x-systemd.requires-mounts-for" || k == "x-systemd.wants-mounts-for"
+                })
                 .filter_map(|(_, v)| v.clone())
                 .collect();
             for b in &branches {
@@ -619,12 +621,18 @@ pub fn validate(doc: &Doc, ctx: &Context) -> Vec<Issue> {
                         continue;
                     }
                     if !requires.iter().any(|r| r == mp) {
-                        warn!("options", format!("branch {b} lives on {mp}; add x-systemd.requires-mounts-for={mp} so the pool never mounts without it"));
+                        warn!("options", format!("branch {b} lives on {mp}; add x-systemd.wants-mounts-for={mp} so the pool mounts after it"));
                     }
                     if b == *mp {
-                        warn!("spec", format!("branch {b} is the mountpoint itself; if {mp} fails to mount, writes land on the disk underneath. Use a subdirectory such as {mp}/data"));
+                        warn!("spec", format!("branch {b} is the mountpoint itself; if {mp} fails to mount, writes land on the disk underneath. Use a subdirectory such as {mp}/data, or protect the mountpoint (Pools → Protect mountpoints)"));
                     }
                 }
+            }
+            if opts
+                .iter()
+                .any(|(k, _)| k == "x-systemd.requires-mounts-for")
+            {
+                warn!("options", "x-systemd.requires-mounts-for makes systemd unmount the whole pool when one of its disks is unmounted; use x-systemd.wants-mounts-for and protect the mountpoints instead".to_string());
             }
         }
     }
@@ -872,7 +880,7 @@ mod tests {
         let all: String = issues.iter().map(|i| i.message.clone() + "\n").collect();
         for frag in [
             "x-systemd.device-timeout=10s is short for a shelf disk",
-            "add x-systemd.requires-mounts-for=/mnt/media1",
+            "add x-systemd.wants-mounts-for=/mnt/media1",
             "branch /mnt/media1 is the mountpoint itself",
         ] {
             assert!(all.contains(frag), "missing {frag:?} in\n{all}");

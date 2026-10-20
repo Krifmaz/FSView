@@ -577,7 +577,11 @@ fn umount_rules() {
         &storage_req(OP_UMOUNT, json!({"target": "/mnt/cache"}), true, ""),
         1,
     );
-    assert!(r.ok && r.plan == vec!["umount /mnt/cache"], "{r:?}");
+    assert!(r.ok && r.plan[0] == "umount /mnt/cache", "{r:?}");
+    // The empty mountpoint is then protected against stray writes.
+    if tool_exists_for_test("chattr") {
+        assert_eq!(r.plan[1..], ["chattr +i /mnt/cache"], "{r:?}");
+    }
 }
 
 #[test]
@@ -726,4 +730,33 @@ fn mount_requires_fstab_entry_and_pool_branches() {
         );
         assert!(r.error.contains("/mnt/b1 which is not mounted"), "{r:?}");
     }
+}
+
+#[test]
+fn protect_mountpoints_plan() {
+    if !tool_exists_for_test("chattr") {
+        return;
+    }
+    let f = fstab_server(true);
+    std::fs::write(
+        &f.t.srv.cfg.fstab_path,
+        "UUID=x /mnt/cache ext4 defaults,nofail 0 2\n/mnt/cache /mnt/pool fuse.mergerfs allow_other 0 0\n",
+    )
+    .unwrap();
+    let r =
+        f.t.srv
+            .handle(&storage_req(OP_PROTECT_MOUNTPOINTS, json!({}), true, ""), 1);
+    assert!(r.ok, "{r:?}");
+    assert!(
+        r.plan.iter().any(|l| l.starts_with("mount --bind / ")),
+        "{r:?}"
+    );
+    assert!(
+        r.plan
+            .iter()
+            .any(|l| l.starts_with("chattr +i ") && l.ends_with("/mnt/cache")),
+        "{r:?}"
+    );
+    assert!(r.plan.iter().any(|l| l.ends_with("/mnt/pool")), "{r:?}");
+    assert!(r.plan.last().unwrap().starts_with("umount "), "{r:?}");
 }

@@ -22,7 +22,7 @@ const CACHE: [string, string][] = [
   ["auto-full", "auto-full"],
 ];
 // Options the form manages; everything else is kept as "extra".
-const MANAGED = ["category.create", "minfreespace", "cache.files", "moveonenospc", "dropcacheonclose", "x-systemd.requires-mounts-for", "nofail", "fsname", "allow_other", "defaults"];
+const MANAGED = ["category.create", "minfreespace", "cache.files", "moveonenospc", "dropcacheonclose", "x-systemd.requires-mounts-for", "x-systemd.wants-mounts-for", "nofail", "fsname", "allow_other", "defaults"];
 // Dropped when a pool is saved: device-timeout means nothing for a FUSE
 // mount (there is no device), and use_ino is ignored by current mergerfs.
 const OBSOLETE = ["x-systemd.device-timeout", "use_ino"];
@@ -93,7 +93,7 @@ function buildEntry(f: Form, entries: StorageEntry[]): FsEntry {
     `fsname=mergerfs-${name}`,
     ...f.extra.split(",").map((s) => s.trim()).filter(Boolean),
     "nofail",
-    ...req.map((m) => `x-systemd.requires-mounts-for=${m}`),
+    ...req.map((m) => `x-systemd.wants-mounts-for=${m}`),
   ];
   const spec = f.branches.map((b) => (f.modes[b] ? `${b}=${f.modes[b]}` : b)).join(":");
   return { spec, file: f.mountpoint, vfstype: "fuse.mergerfs", options: [...new Set(opts)].join(","), freq: 0, passno: 0 };
@@ -307,8 +307,8 @@ function PoolEditor({ form, data, onClose, onSaved }: { form: Form; data: Storag
               {live ? "Apply the changes to the running pool now (no unmount)" : wasMounted ? "Remount now so the changes take effect" : "Mount the pool now"}
             </label>
             <div className="small dim">
-              FSView adds <span className="mono">nofail</span> and <span className="mono">x-systemd.requires-mounts-for</span> for every disk, so the pool never mounts without its disks and never
-              writes onto the system disk.
+              FSView adds <span className="mono">nofail</span> and <span className="mono">x-systemd.wants-mounts-for</span> for every disk, so the pool mounts after its disks without
+              being unmounted when one of them is. Use <b>Protect mountpoints</b> so a missing disk can never be replaced by the system disk underneath.
             </div>
             <ErrorBox error={err} />
             <div className="row" style={{ justifyContent: "flex-end" }}>
@@ -409,9 +409,28 @@ export default function PoolsPage() {
           <h1>Pools</h1>
           <p className="sub small">mergerfs combines several disks into one folder. Each file lives whole on one disk, so a failed disk only loses its own files.</p>
         </div>
-        <button className="btn primary" disabled={!data.writes_enabled || data.mergerfs_installed === false} onClick={() => setEditor(newForm)}>
-          <Plus size={16} /> New pool
-        </button>
+        <div className="row">
+          <button
+            className="btn"
+            disabled={!data.writes_enabled}
+            title="Makes the empty folders under your disk mounts read-only, so if a disk drops out nothing can be written onto the system disk in its place"
+            onClick={() =>
+              act.start({
+                url: "/api/mounts/protect",
+                body: {},
+                title: "Protect mountpoints",
+                operation:
+                  "Make the empty directories underneath every data mount in fstab immutable (chattr +i). Disks still mount on top of them as usual. If a disk is missing or unmounted, pools and apps get an error instead of silently filling the system disk.",
+                confirmLabel: "Protect",
+              })
+            }
+          >
+            Protect mountpoints
+          </button>
+          <button className="btn primary" disabled={!data.writes_enabled || data.mergerfs_installed === false} onClick={() => setEditor(newForm)}>
+            <Plus size={16} /> New pool
+          </button>
+        </div>
       </div>
       {data.mergerfs_installed === false && (
         <div className="alert warn" style={{ flexDirection: "column" }}>

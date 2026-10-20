@@ -86,8 +86,15 @@ fn class_of(op: &str) -> Option<Class> {
         OP_STATUS | OP_INVENTORY | OP_SMART_GET | OP_JOURNAL_KERNEL | OP_BOOT_COLLECT
         | OP_AUDIT_LIST | OP_HIDDEN_SCAN | OP_FSTAB_READ | OP_FSTAB_PREVIEW | OP_FSTAB_BACKUP
         | OP_MOUNTS_LIST => Class::Read,
-        OP_SMART_SELFTEST | OP_FSTAB_WRITE | OP_FSTAB_ROLLBACK | OP_MOUNT | OP_UMOUNT
-        | OP_FS_CHECK | OP_LOCATE | OP_FS_LABEL => Class::Write,
+        OP_SMART_SELFTEST
+        | OP_FSTAB_WRITE
+        | OP_FSTAB_ROLLBACK
+        | OP_MOUNT
+        | OP_UMOUNT
+        | OP_FS_CHECK
+        | OP_LOCATE
+        | OP_FS_LABEL
+        | OP_PROTECT_MOUNTPOINTS => Class::Write,
         OP_FS_FORMAT | OP_FS_REPAIR => Class::Destructive,
         _ => return None,
     })
@@ -277,6 +284,7 @@ impl Server {
             OP_FSTAB_ROLLBACK => self.prep_fstab_rollback(req),
             OP_MOUNT => self.prep_mount(req),
             OP_UMOUNT => self.prep_umount(req),
+            OP_PROTECT_MOUNTPOINTS => self.prep_protect_mountpoints(),
             OP_FS_FORMAT => self.prep_format(req),
             OP_FS_CHECK => self.prep_fs_check(req, false),
             OP_FS_REPAIR => self.prep_fs_check(req, true),
@@ -441,6 +449,9 @@ fn tolerated_exit(cmd: &[String], code: i32) -> bool {
         // 1 = errors corrected, 2 = reboot advised, 4 = errors left (-n)
         "e2fsck" => code < if read_only { 8 } else { 4 },
         "xfs_repair" | "fsck.vfat" | "fsck.exfat" | "btrfs" => read_only && code == 1,
+        // Protecting a mountpoint is best effort (e.g. a filesystem without
+        // the immutable flag); the mount or unmount itself already worked.
+        "chattr" => true,
         _ => false,
     }
 }

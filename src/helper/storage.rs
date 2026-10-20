@@ -488,6 +488,11 @@ impl Server {
             )));
         }
         actions.push(Action::Run(vec!["umount".into(), t.into()]));
+        // The now-empty mountpoint must not take writes meant for the disk
+        // (e.g. from a pool or a container still pointing at it).
+        if fstab::creatable_mountpoint(t) && tool_exists("chattr") {
+            actions.push(Action::Run(vec!["chattr".into(), "+i".into(), t.into()]));
+        }
         Ok(Plan {
             targets: vec![t.into()],
             actions,
@@ -932,6 +937,51 @@ fn settle() -> Option<Action> {
             "--timeout=30".into(),
         ])
     })
+}
+
+impl Server {
+    /// Sets the immutable flag on the directories underneath every data
+    /// mount in fstab (seen through a bind mount of / without submounts),
+    /// so a disk that drops out or is unmounted can't have its files
+    /// written onto the system disk instead. Mounting over an immutable
+    /// directory works as before.
+    pub(super) fn prep_protect_mountpoints(&self) -> Result<Plan, OpError> {
+        if !tool_exists("chattr") {
+            return Err(bad("chattr is not installed (apt install e2fsprogs)"));
+        }
+        let entries = self.fstab_entries()?;
+        let targets: Vec<String> = entries
+            .iter()
+            .filter(|e| e.vfstype != "swap" && fstab::creatable_mountpoint(&e.file))
+            .map(|e| e.file.clone())
+            .collect();
+        if targets.is_empty() {
+            return Err(bad("no data mountpoints in fstab"));
+        }
+        let view = self.cfg.scratch_dir.join("rootview");
+        let v = view.display().to_string();
+        let mut actions = vec![
+            Action::Mkdir(view.clone()),
+            Action::Run(vec!["mount".into(), "--bind".into(), "/".into(), v.clone()]),
+        ];
+        for t in &targets {
+            actions.push(Action::Run(vec![
+                "chattr".into(),
+                "+i".into(),
+                format!("{v}{t}"),
+            ]));
+        }
+        actions.push(Action::Run(vec!["umount".into(), v]));
+        Ok(Plan {
+            targets: targets.clone(),
+            actions,
+            summary: format!(
+                "protect {} mountpoint(s) against writes while unmounted",
+                targets.len()
+            ),
+            detail: String::new(),
+        })
+    }
 }
 
 /// Every branch of a pool must exist and sit on a mounted filesystem;

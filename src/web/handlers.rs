@@ -63,6 +63,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/storage", get(storage))
         .route("/api/mounts/mount", post(mount))
         .route("/api/mounts/umount", post(umount))
+        .route("/api/mounts/protect", post(protect_mountpoints))
         .route("/api/disks/{name}/format", post(format))
         .route("/api/disks/{name}/check", post(fs_check))
         .route("/api/disks/{name}/locate", post(locate))
@@ -913,6 +914,18 @@ async fn umount(
     helper_write(&app, (u, ip), OP_UMOUNT, b).await
 }
 
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NoParams {}
+
+async fn protect_mountpoints(
+    State(app): AppState,
+    User(u, ip): User,
+    JsonBody(b): JsonBody<WriteBody<NoParams>>,
+) -> Response {
+    helper_write(&app, (u, ip), OP_PROTECT_MOUNTPOINTS, b).await
+}
+
 /// The device must be the disk in the URL or one of its partitions.
 async fn device_of(app: &App, disk: &str, device: &str) -> Result<(), Box<Response>> {
     let d = find_disk(app, disk).await?;
@@ -1114,7 +1127,7 @@ pub(crate) fn storage_view(fs: &FstabState, ms: &[MountInfo], st: Option<&Status
                         "mount": on,
                         "mounted": on.is_none() || bm.is_some(),
                         "usage": usage(bm),
-                        "required": opts.iter().any(|(k, v)| k == "x-systemd.requires-mounts-for" && v.as_deref() == on.as_deref()),
+                        "required": opts.iter().any(|(k, v)| (k == "x-systemd.requires-mounts-for" || k == "x-systemd.wants-mounts-for") && v.as_deref() == on.as_deref()),
                     })
                 })
                 .collect();

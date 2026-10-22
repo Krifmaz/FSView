@@ -1053,6 +1053,274 @@ impl Server {
     }
 }
 
+/// Where a pool branch's filesystem stands right now.
+#[derive(Debug, Clone, PartialEq)]
+enum Owner {
+    /// Not on a separate fstab mount.
+    Root,
+    /// Mounted; `ro` when mounted read-only.
+    Up { ro: bool },
+    /// Still mounted but its device has vanished.
+    Gone,
+    /// The fstab mountpoint is not mounted.
+    Down(String),
+}
+
+#[derive(Debug, Clone)]
+struct HealBranch {
+    path: String,
+    /// Mode from fstab ("" means RW), possibly with extra ",..." settings.
+    mode: String,
+    /// Mode the running pool has for it, None if it is not in the pool.
+    live: Option<String>,
+    owner: Owner,
+}
+
+fn mode_word(m: &str) -> String {
+    match m.split(',').next().unwrap_or("") {
+        "" => "RW".into(),
+        w => w.to_ascii_uppercase(),
+    }
+}
+
+/// Works out the branch list a running pool should have and the
+/// mountpoints to remount first. `blocker` says why a branch's disk must
+/// not be trusted with writes again (None when it is fine); it is only
+/// asked about branches that would change, so healthy pools never touch
+/// their disks.
+fn heal_branches(
+    bs: &[HealBranch],
+    blocker: &mut dyn FnMut(&HealBranch) -> Option<String>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let (mut desired, mut remount, mut notes) = (vec![], vec![], vec![]);
+    let keep = |b: &HealBranch, out: &mut Vec<String>| {
+        if let Some(l) = &b.live {
+            out.push(format!("{}={l}", b.path));
+        }
+    };
+    let want = |b: &HealBranch| {
+        if b.mode.is_empty() {
+            format!("{}=RW", b.path)
+        } else {
+            format!("{}={}", b.path, b.mode)
+        }
+    };
+    for b in bs {
+        let upgrade = b
+            .live
+            .as_ref()
+            .is_some_and(|l| mode_word(l) != mode_word(&b.mode));
+        match &b.owner {
+            Owner::Gone => keep(b, &mut desired),
+            Owner::Up { ro: true } => desired.push(format!("{}=RO", b.path)),
+            Owner::Root | Owner::Up { .. } => {
+                if upgrade {
+                    if let Some(why) = blocker(b) {
+                        notes.push(format!(
+                            "{} stays {}: {why}",
+                            b.path,
+                            mode_word(b.live.as_deref().unwrap_or(""))
+                        ));
+                        keep(b, &mut desired);
+                        continue;
+                    }
+                }
+                desired.push(want(b));
+            }
+            Owner::Down(t) => {
+                // Only branches that dropped out are brought back; one that
+                // was detached on purpose (FSView unmount) is not in the pool.
+                if b.live.is_none() {
+                    continue;
+                }
+                if !remount.contains(t) {
+                    if let Some(why) = blocker(b) {
+                        notes.push(format!("{t} not remounted: {why}"));
+                        keep(b, &mut desired);
+                        continue;
+                    }
+                    remount.push(t.clone());
+                }
+                desired.push(want(b));
+            }
+        }
+    }
+    (desired, remount, notes)
+}
+
+/// Device node an fstab spec refers to, if it is a local block device.
+fn spec_device(spec: &str) -> Option<PathBuf> {
+    for (tag, dir) in [
+        ("UUID=", "by-uuid"),
+        ("LABEL=", "by-label"),
+        ("PARTUUID=", "by-partuuid"),
+        ("PARTLABEL=", "by-partlabel"),
+    ] {
+        if let Some(v) = spec.strip_prefix(tag) {
+            return Some(PathBuf::from(format!(
+                "/dev/disk/{dir}/{}",
+                v.trim_matches('"')
+            )));
+        }
+    }
+    spec.starts_with("/dev/").then(|| PathBuf::from(spec))
+}
+
+impl Server {
+    /// Brings running mergerfs pools back to their fstab state after a
+    /// disk dropped out: remounts branch disks that are back (and not
+    /// failing or carrying filesystem errors) and restores branches
+    /// mergerfs switched to read-only. An empty plan means nothing to do.
+    pub(super) fn prep_pool_heal(&self, req: &Request) -> Result<Plan, OpError> {
+        let p: PoolHealParams = decode(req)?;
+        let entries = self.fstab_entries()?;
+        let mounts = self.mounts()?;
+        let inv = self.inventory().ok();
+        let mut plan = Plan {
+            targets: vec![],
+            actions: vec![],
+            summary: String::new(),
+            detail: String::new(),
+        };
+        let mut done = vec![];
+        let mut notes = vec![];
+        for pool in entries.iter().filter(|e| is_mergerfs(e)) {
+            if pool.spec.contains('*') || !mounts.iter().any(|m| m.target == pool.file) {
+                continue;
+            }
+            let Some(live) = self.live_branches(&pool.file) else {
+                continue;
+            };
+            let bs: Vec<HealBranch> = mergerfs_branch_modes(pool)
+                .into_iter()
+                .map(|(path, mode)| {
+                    let live = live
+                        .iter()
+                        .find(|l| branch_path(l) == path)
+                        .map(|l| l.split_once('=').map(|x| x.1).unwrap_or("RW").to_string());
+                    let owner = match branch_owner(&path, pool, &entries) {
+                        None => Owner::Root,
+                        Some(o) => match mounts.iter().find(|m| m.target == o.file) {
+                            Some(m)
+                                if m.source.starts_with("/dev/")
+                                    && !Path::new(&m.source).exists() =>
+                            {
+                                Owner::Gone
+                            }
+                            Some(m) => Owner::Up {
+                                ro: m.options.split(',').any(|x| x == "ro"),
+                            },
+                            None => Owner::Down(o.file.clone()),
+                        },
+                    };
+                    HealBranch {
+                        path,
+                        mode,
+                        live,
+                        owner,
+                    }
+                })
+                .collect();
+            let mut blocker = |b: &HealBranch| -> Option<String> {
+                let (dev, fstype) = match &b.owner {
+                    Owner::Root => return None,
+                    Owner::Down(t) => {
+                        let e = entries.iter().find(|e| &e.file == t)?;
+                        let Some(d) = spec_device(&e.spec) else {
+                            return Some("not a local disk".into());
+                        };
+                        if !d.exists() {
+                            return Some("its disk is not connected".into());
+                        }
+                        (d, e.vfstype.clone())
+                    }
+                    _ => {
+                        let o = branch_owner(&b.path, pool, &entries)?;
+                        let m = mounts.iter().find(|m| m.target == o.file)?;
+                        (PathBuf::from(&m.source), m.fstype.clone())
+                    }
+                };
+                let dev = std::fs::canonicalize(&dev)
+                    .unwrap_or(dev)
+                    .display()
+                    .to_string();
+                if let Some(inv) = &inv {
+                    for d in &inv.disks {
+                        let mut on = d.path == dev;
+                        d.walk(&mut |n| on |= n.path == dev);
+                        if on && p.skip_disks.contains(&d.name) {
+                            return Some(format!("{} is failing (SMART)", d.name));
+                        }
+                    }
+                }
+                if fstype.starts_with("ext") && tool_exists("dumpe2fs") {
+                    if let Ok(r) = self.runner.run("dumpe2fs", &["-h", &dev]) {
+                        let out = String::from_utf8_lossy(&r.stdout);
+                        if r.code != 0 {
+                            return Some(format!("cannot read the filesystem on {dev}"));
+                        }
+                        if out
+                            .lines()
+                            .any(|l| l.starts_with("Filesystem state:") && l.contains("error"))
+                        {
+                            return Some(format!(
+                                "the filesystem on {dev} has recorded errors; check it first"
+                            ));
+                        }
+                    }
+                }
+                None
+            };
+            let (desired, remount, n) = heal_branches(&bs, &mut blocker);
+            notes.extend(n);
+            for t in remount {
+                if done.contains(&t) {
+                    continue;
+                }
+                let mut c = vec!["mount".to_string()];
+                if self.cfg.fstab_path != Path::new("/etc/fstab") {
+                    c.extend(["-T".into(), self.cfg.fstab_path.display().to_string()]);
+                }
+                c.push(t.clone());
+                plan.actions.push(Action::Run(own_scope(c)));
+                plan.targets.push(t.clone());
+                done.push(t);
+            }
+            let norm = |v: &[String]| -> Vec<String> {
+                v.iter()
+                    .map(|b| {
+                        let (p, m) = b.split_once('=').unwrap_or((b, ""));
+                        format!("{p}={}", mode_word(m))
+                    })
+                    .collect()
+            };
+            if !desired.is_empty() && norm(&desired) != norm(&live) {
+                plan.actions.push(set_branches(&pool.file, &desired));
+                plan.targets.push(pool.file.clone());
+            }
+        }
+        plan.summary = if plan.actions.is_empty() {
+            "pools are healthy".into()
+        } else {
+            format!("heal {}", plan.targets.join(", "))
+        };
+        plan.detail = notes.join("\n");
+        if !plan.detail.is_empty() {
+            plan.detail.push('\n');
+        }
+        Ok(plan)
+    }
+}
+
+/// The fstab mount a pool branch lives on (deepest match), if any.
+fn branch_owner<'a>(b: &str, pool: &FsEntry, entries: &'a [FsEntry]) -> Option<&'a FsEntry> {
+    entries
+        .iter()
+        .filter(|o| o.file != "/" && o.file != pool.file && o.vfstype != "swap")
+        .filter(|o| under(b, &o.file))
+        .max_by_key(|o| o.file.len())
+}
+
 /// Runs a mount command in its own transient systemd scope. FUSE
 /// filesystems (mergerfs, ntfs-3g) leave a daemon running; started from
 /// the helper it would sit in fsview-helper's cgroup and be killed when the
@@ -1072,6 +1340,65 @@ fn own_scope(cmd: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heal_plan() {
+        let b = |path: &str, mode: &str, live: Option<&str>, owner: Owner| HealBranch {
+            path: path.into(),
+            mode: mode.into(),
+            live: live.map(str::to_string),
+            owner,
+        };
+        let bs = vec![
+            // dropped out, back again: remount and restore RW
+            b("/mnt/a", "", Some("RO"), Owner::Down("/mnt/a".into())),
+            // marked RO by mergerfs while mounted fine: back to RW
+            b("/mnt/b", "", Some("RO"), Owner::Up { ro: false }),
+            // NC stays NC
+            b("/mnt/c", "NC", Some("NC"), Owner::Up { ro: false }),
+            // unmounted on purpose (detached): left out
+            b("/mnt/d", "", None, Owner::Down("/mnt/d".into())),
+            // device gone: untouched
+            b("/mnt/e", "", Some("RO"), Owner::Gone),
+            // filesystem remounted read-only: stays RO
+            b("/mnt/f", "", Some("RW"), Owner::Up { ro: true }),
+        ];
+        let (d, r, n) = heal_branches(&bs, &mut |_| None);
+        assert_eq!(
+            d,
+            [
+                "/mnt/a=RW",
+                "/mnt/b=RW",
+                "/mnt/c=NC",
+                "/mnt/e=RO",
+                "/mnt/f=RO"
+            ]
+        );
+        assert_eq!(r, ["/mnt/a"]);
+        assert!(n.is_empty());
+
+        // a failing disk is neither remounted nor made writable
+        let (d, r, n) = heal_branches(&bs, &mut |b| {
+            (b.path != "/mnt/c").then(|| "failing".to_string())
+        });
+        assert_eq!(
+            d,
+            [
+                "/mnt/a=RO",
+                "/mnt/b=RO",
+                "/mnt/c=NC",
+                "/mnt/e=RO",
+                "/mnt/f=RO"
+            ]
+        );
+        assert!(r.is_empty());
+        assert_eq!(n.len(), 2);
+
+        // healthy pools never ask about their disks
+        let ok = vec![b("/mnt/a", "", Some("RW"), Owner::Up { ro: false })];
+        let (d, _, _) = heal_branches(&ok, &mut |_| panic!("disk touched"));
+        assert_eq!(d, ["/mnt/a=RW"]);
+    }
 
     #[test]
     fn partition_names() {

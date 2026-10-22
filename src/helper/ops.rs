@@ -94,7 +94,8 @@ fn class_of(op: &str) -> Option<Class> {
         | OP_FS_CHECK
         | OP_LOCATE
         | OP_FS_LABEL
-        | OP_PROTECT_MOUNTPOINTS => Class::Write,
+        | OP_PROTECT_MOUNTPOINTS
+        | OP_POOL_HEAL => Class::Write,
         OP_FS_FORMAT | OP_FS_REPAIR => Class::Destructive,
         _ => return None,
     })
@@ -285,6 +286,7 @@ impl Server {
             OP_MOUNT => self.prep_mount(req),
             OP_UMOUNT => self.prep_umount(req),
             OP_PROTECT_MOUNTPOINTS => self.prep_protect_mountpoints(),
+            OP_POOL_HEAL => self.prep_pool_heal(req),
             OP_FS_FORMAT => self.prep_format(req),
             OP_FS_CHECK => self.prep_fs_check(req, false),
             OP_FS_REPAIR => self.prep_fs_check(req, true),
@@ -311,6 +313,9 @@ impl Server {
             self.audit(rec.clone());
             Response::err(code, msg)
         };
+        if !self.cfg.writes_enabled && req.op == OP_POOL_HEAL {
+            return Response::err(CODE_WRITES_OFF, "writes are disabled");
+        }
         if !self.cfg.writes_enabled {
             return reject(&mut rec, CODE_WRITES_OFF, "write operations are disabled in the helper configuration (writes_enabled = false)".into());
         }
@@ -318,6 +323,12 @@ impl Server {
             Ok(p) => p,
             Err((code, msg)) => return reject(&mut rec, code, msg),
         };
+        // Background checks that find nothing to do leave no audit trail.
+        if plan.actions.is_empty() && req.op == OP_POOL_HEAL {
+            return Response::ok(
+                &serde_json::json!({"summary": plan.summary, "output": plan.detail}),
+            );
+        }
         rec.targets = plan.targets.clone();
         rec.commands = plan.actions.iter().map(Action::describe).collect();
 

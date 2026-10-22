@@ -43,6 +43,15 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
     }
   };
 
+  const toggleHeal = async (on: boolean) => {
+    if (!form) return;
+    try {
+      setForm(await api.put<Settings>("/api/settings", { ...form, auto_heal_pools: on }));
+    } catch (err: any) {
+      setMsg({ kind: "error", text: err.message });
+    }
+  };
+
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!form) return;
@@ -127,6 +136,19 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
               Ask before mount, unmount, rename, self-tests and other non-destructive actions
               <div className="small dim">
                 When off, they run right away (still recorded in the audit log). Format, wipe and repair always ask you to type the disk name; fstab and pool edits always show the diff.
+              </div>
+            </span>
+          </label>
+        </div>
+
+        <div className="card stack">
+          <h3 style={{ margin: 0 }}>Pools</h3>
+          <label className="check" style={{ alignItems: "flex-start" }}>
+            <input type="checkbox" checked={form?.auto_heal_pools !== false} disabled={!form} onChange={(e) => toggleHeal(e.target.checked)} />
+            <span>
+              Auto-heal pools
+              <div className="small dim">
+                Every 5 minutes, remounts pool disks that dropped out and came back, and makes branches the pool switched to read-only writable again. Disks SMART rates critical, or whose filesystem has recorded errors, are left alone. Every fix is in the audit log.
               </div>
             </span>
           </label>

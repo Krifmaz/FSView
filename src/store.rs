@@ -39,6 +39,9 @@ pub struct Settings {
     pub skip_confirm: bool,
     /// Acknowledged SMART error counts by disk serial number.
     pub acknowledged: HashMap<String, Ack>,
+    /// Every few minutes, remount pool disks that dropped out and came
+    /// back healthy, and undo read-only branches mergerfs set.
+    pub auto_heal_pools: bool,
 }
 
 impl Default for Settings {
@@ -50,6 +53,7 @@ impl Default for Settings {
             ignored_elements: vec![],
             skip_confirm: false,
             acknowledged: HashMap::new(),
+            auto_heal_pools: true,
         }
     }
 }

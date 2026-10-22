@@ -336,6 +336,7 @@ export interface Settings {
   event_retention: number;
   ignored_elements?: string[];
   skip_confirm?: boolean;
+  auto_heal_pools?: boolean;
 }
 
 export interface StatusInfo {

@@ -23,6 +23,9 @@ pub const OP_UMOUNT: &str = "umount";
 /// Makes the empty directories under data mounts immutable, so nothing can
 /// be written into them while their disk is not mounted.
 pub const OP_PROTECT_MOUNTPOINTS: &str = "mountpoints.protect";
+/// Remounts pool disks that dropped out and came back, and restores pool
+/// branches mergerfs switched to read-only. Does nothing when all is well.
+pub const OP_POOL_HEAL: &str = "pool.heal";
 pub const OP_FS_FORMAT: &str = "fs.format";
 pub const OP_FS_CHECK: &str = "fs.check";
 pub const OP_FS_REPAIR: &str = "fs.repair";
@@ -268,6 +271,14 @@ pub struct FstabRollbackParams {
 pub struct MountParams {
     /// Mountpoint of an fstab entry (mount) or of an active mount (umount).
     pub target: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PoolHealParams {
+    /// Disks (e.g. "sdh") to leave alone, such as ones SMART calls failing.
+    #[serde(default)]
+    pub skip_disks: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -129,6 +129,7 @@ impl App {
         tokio::spawn(self.clone().journal_loop());
         tokio::spawn(self.clone().smart_loop());
         tokio::spawn(self.clone().hidden_loop());
+        tokio::spawn(self.clone().pool_heal_loop());
 
         let (stop_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         let mut servers = Vec::new();
@@ -249,6 +250,48 @@ impl App {
             tokio::select! {
                 _ = t.tick() => self.refresh_all_smart().await,
                 Some(dev) = rx.recv() => { self.refresh_smart(&dev, false).await; }
+            }
+        }
+    }
+
+    /// Puts dropped pool disks back once they return healthy (see
+    /// OP_POOL_HEAL). Disks SMART rates critical are left alone.
+    async fn pool_heal_loop(self: Arc<Self>) {
+        let mut t = tokio::time::interval(Duration::from_secs(300));
+        t.tick().await;
+        loop {
+            t.tick().await;
+            if !self.store.settings().auto_heal_pools {
+                continue;
+            }
+            let devs: Vec<String> = self.smart.lock().unwrap().keys().cloned().collect();
+            let skip: Vec<String> = devs
+                .into_iter()
+                .filter(|d| {
+                    self.smart_for(d)
+                        .is_some_and(|e| e.assessment.status == smart::CRIT)
+                })
+                .collect();
+            let req = Request {
+                op: OP_POOL_HEAL.into(),
+                actor: "fsview (auto-heal)".into(),
+                confirmed: true,
+                params: params(&PoolHealParams { skip_disks: skip }),
+                ..Default::default()
+            };
+            match self.helper.call(req).await {
+                Ok(r) if r.ok && !r.plan.is_empty() => {
+                    eprintln!(
+                        "fsview: auto-heal: {}",
+                        r.result["summary"].as_str().unwrap_or("")
+                    );
+                    self.invalidate_caches().await;
+                }
+                Ok(r) if !r.ok && r.code != CODE_WRITES_OFF => {
+                    eprintln!("fsview: auto-heal: {}", r.error)
+                }
+                Err(e) => eprintln!("fsview: auto-heal: {e}"),
+                _ => {}
             }
         }
     }

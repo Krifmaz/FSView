@@ -26,6 +26,13 @@ pub const OP_PROTECT_MOUNTPOINTS: &str = "mountpoints.protect";
 /// Remounts pool disks that dropped out and came back, and restores pool
 /// branches mergerfs switched to read-only. Does nothing when all is well.
 pub const OP_POOL_HEAL: &str = "pool.heal";
+/// Per-branch health of every mounted mergerfs pool (read only).
+pub const OP_POOL_HEALTH: &str = "pool.health";
+/// Which branch holds a file in a pool (read only).
+pub const OP_POOL_LOCATE: &str = "pool.locate";
+/// Guided repair of one pool branch: stop consumers, unmount, fsck,
+/// remount, run the post step.
+pub const OP_POOL_REPAIR: &str = "pool.repair";
 pub const OP_FS_FORMAT: &str = "fs.format";
 pub const OP_FS_CHECK: &str = "fs.check";
 pub const OP_FS_REPAIR: &str = "fs.repair";
@@ -271,6 +278,50 @@ pub struct FstabRollbackParams {
 pub struct MountParams {
     /// Mountpoint of an fstab entry (mount) or of an active mount (umount).
     pub target: String,
+}
+
+/// Parameters of [`OP_POOL_HEALTH`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PoolHealthParams {
+    /// Do not query SMART (the background watcher only needs RO state).
+    #[serde(default)]
+    pub skip_smart: bool,
+}
+
+/// Parameters of [`OP_POOL_LOCATE`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PoolLocateParams {
+    /// Pool mountpoint.
+    pub pool: String,
+    /// File or directory, absolute (inside the pool) or relative to it.
+    pub path: String,
+}
+
+/// Answer of [`OP_POOL_LOCATE`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PoolLocateResult {
+    /// The path inside the pool that was asked about.
+    pub path: String,
+    /// Where mergerfs reads it from (`user.mergerfs.fullpath`).
+    pub fullpath: String,
+    /// The branch holding `fullpath`.
+    pub branch: String,
+    /// Every copy on every branch (`user.mergerfs.allpaths`), when there
+    /// is more than one (e.g. a directory or a duplicated file).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allpaths: Vec<String>,
+}
+
+/// Parameters of [`OP_POOL_REPAIR`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PoolRepairParams {
+    /// Pool mountpoint.
+    pub pool: String,
+    /// Branch directory to repair, as mergerfs lists it.
+    pub branch: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

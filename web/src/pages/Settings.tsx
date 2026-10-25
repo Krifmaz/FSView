@@ -52,6 +52,15 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
     }
   };
 
+  const toggleWatch = async (on: boolean) => {
+    if (!form) return;
+    try {
+      setForm(await api.put<Settings>("/api/settings", { ...form, pool_health_watch: on }));
+    } catch (err: any) {
+      setMsg({ kind: "error", text: err.message });
+    }
+  };
+
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!form) return;
@@ -149,6 +158,16 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
               Auto-heal pools
               <div className="small dim">
                 Every minute, takes disks that dropped out of the pool out of the way of new files, remounts them when they come back, and makes branches the pool switched to read-only writable again. Disks SMART rates critical, or whose filesystem has recorded errors, are left alone. Every fix is in the audit log.
+              </div>
+            </span>
+          </label>
+          <label className="check" style={{ alignItems: "flex-start" }}>
+            <input type="checkbox" checked={!!form?.pool_health_watch} disabled={!form} onChange={(e) => toggleWatch(e.target.checked)} />
+            <span>
+              Pool health watch
+              <div className="small dim">
+                Every 5 minutes, checks each pool branch and records an event (Events page, category "pool") when one goes read-only — mergerfs marked it RO, or its
+                filesystem is mounted ro or emergency_ro — and again when it is writable.
               </div>
             </span>
           </label>

@@ -130,6 +130,7 @@ impl App {
         tokio::spawn(self.clone().smart_loop());
         tokio::spawn(self.clone().hidden_loop());
         tokio::spawn(self.clone().pool_heal_loop());
+        tokio::spawn(self.clone().pool_health_loop());
 
         let (stop_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         let mut servers = Vec::new();
@@ -293,6 +294,60 @@ impl App {
                 Err(e) => eprintln!("fsview: auto-heal: {e}"),
                 _ => {}
             }
+        }
+    }
+
+    /// Optional pool health watch (Settings → Pools): every 5 minutes reads
+    /// pool health without SMART and records an event when a branch goes
+    /// read-only (mergerfs `=RO`, `ro` or `emergency_ro` mount) and when it
+    /// is writable again. Events appear on the Events page and in its live
+    /// stream. The first check after start only records branches that are
+    /// already read-only, once.
+    async fn pool_health_loop(self: Arc<Self>) {
+        let mut t = tokio::time::interval(POOL_HEALTH_INTERVAL);
+        let mut known: Option<HashMap<String, String>> = None;
+        loop {
+            t.tick().await;
+            if !self.store.settings().pool_health_watch {
+                known = None;
+                continue;
+            }
+            let req = Request {
+                op: OP_POOL_HEALTH.into(),
+                params: params(&PoolHealthParams { skip_smart: true }),
+                ..Default::default()
+            };
+            let Ok((pools, _)) =
+                call_as::<Vec<crate::poolhealth::PoolHealth>>(&*self.helper, req).await
+            else {
+                continue;
+            };
+            let now: HashMap<String, String> = pools
+                .iter()
+                .flat_map(|p| {
+                    p.branches.iter().filter(|b| b.read_only()).map(move |b| {
+                        (
+                            format!("{}|{}", p.mountpoint, b.path),
+                            b.read_only_reasons(),
+                        )
+                    })
+                })
+                .collect();
+            let devices: HashMap<String, String> = pools
+                .iter()
+                .flat_map(|p| {
+                    p.branches.iter().map(move |b| {
+                        (
+                            format!("{}|{}", p.mountpoint, b.path),
+                            crate::poolhealth::kernel_name(&b.device).to_string(),
+                        )
+                    })
+                })
+                .collect();
+            let before = known.take().unwrap_or_default();
+            let evs = pool_transitions(&before, &now, &devices, Utc::now());
+            self.events.add(evs);
+            known = Some(now);
         }
     }
 
@@ -486,6 +541,96 @@ mod tests;
 
 /// Evaluates a SMART report with the user's thresholds and acknowledged
 /// error counts.
+/// How often the optional pool health watch runs.
+const POOL_HEALTH_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Events for branches that went read-only (in `now`, not in `before`) or
+/// recovered (the other way round). Both maps go from `"<pool>|<branch>"`
+/// to the read-only reasons.
+fn pool_transitions(
+    before: &HashMap<String, String>,
+    now: &HashMap<String, String>,
+    devices: &HashMap<String, String>,
+    stamp: DateTime<Utc>,
+) -> Vec<events::Event> {
+    let mut evs = vec![];
+    for (k, why) in now {
+        if !before.contains_key(k) {
+            evs.push(pool_event(
+                k,
+                devices,
+                stamp,
+                "error",
+                &format!("went read-only: {why}"),
+            ));
+        }
+    }
+    for k in before.keys() {
+        if !now.contains_key(k) {
+            evs.push(pool_event(k, devices, stamp, "info", "is writable again"));
+        }
+    }
+    evs.sort_by(|a, b| a.message.cmp(&b.message));
+    evs
+}
+
+/// An Events entry for a pool branch state change. `key` is
+/// `"<pool>|<branch>"`.
+fn pool_event(
+    key: &str,
+    devices: &HashMap<String, String>,
+    time: DateTime<Utc>,
+    severity: &str,
+    what: &str,
+) -> events::Event {
+    let (pool, branch) = key.split_once('|').unwrap_or((key, ""));
+    events::Event {
+        cursor: format!("fsview-pool:{key}:{}", time.timestamp_micros()),
+        time,
+        category: events::CAT_POOL.into(),
+        severity: severity.into(),
+        device: devices.get(key).cloned().unwrap_or_default(),
+        message: format!("Pool {pool}: branch {branch} {what}"),
+        ..Default::default()
+    }
+}
+
 fn eval_report(r: &smart::Report, s: &crate::store::Settings) -> smart::Assessment {
     smart::evaluate_with(r, &s.thresholds, s.acknowledged.get(&r.serial))
+}
+
+#[cfg(test)]
+mod pool_watch_tests {
+    use super::*;
+
+    #[test]
+    fn transitions() {
+        let m = |v: &[(&str, &str)]| -> HashMap<String, String> {
+            v.iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect()
+        };
+        let dev = m(&[("/mnt/pool|/mnt/media5", "sdc1")]);
+        let t = Utc::now();
+        let evs = pool_transitions(
+            &m(&[]),
+            &m(&[("/mnt/pool|/mnt/media5", "mounted emergency_ro")]),
+            &dev,
+            t,
+        );
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].severity, "error");
+        assert_eq!(evs[0].category, events::CAT_POOL);
+        assert_eq!(evs[0].device, "sdc1");
+        assert_eq!(
+            evs[0].message,
+            "Pool /mnt/pool: branch /mnt/media5 went read-only: mounted emergency_ro"
+        );
+        // unchanged: nothing; recovered: one info event
+        let ro = m(&[("/mnt/pool|/mnt/media5", "x")]);
+        assert!(pool_transitions(&ro, &ro, &dev, t).is_empty());
+        let evs = pool_transitions(&ro, &m(&[]), &dev, t);
+        assert_eq!(evs[0].severity, "info");
+        assert!(evs[0].message.ends_with("is writable again"));
+    }
 }

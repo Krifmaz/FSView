@@ -100,6 +100,9 @@ pub const CAT_APPEARED: &str = "appeared";
 pub const CAT_REMOVED: &str = "removed";
 pub const CAT_FS: &str = "filesystem";
 pub const CAT_MEDIUM: &str = "medium_error";
+/// A mergerfs pool branch changed state (recorded by FSView's pool health
+/// watch, not read from the kernel log).
+pub const CAT_POOL: &str = "pool";
 
 struct Rules {
     rules: Vec<(Regex, &'static str, &'static str)>,

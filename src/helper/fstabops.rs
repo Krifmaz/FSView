@@ -294,7 +294,9 @@ impl Server {
 /// caller).
 pub(super) fn apply_file_action(a: &Action) -> Result<(), String> {
     match a {
-        Action::Run(_) => Err("internal: Run is not a file action".into()),
+        Action::Run(_) | Action::RunBestEffort(_) => {
+            Err("internal: Run is not a file action".into())
+        }
         Action::Backup { src, dst } => backup(src, dst),
         Action::Mkdir(p) => std::fs::DirBuilder::new()
             .recursive(true)

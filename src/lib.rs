@@ -15,6 +15,7 @@ pub mod helper;
 pub mod helperclient;
 pub mod inventory;
 pub mod netutil;
+pub mod poolhealth;
 pub mod proto;
 pub mod runner;
 pub mod smart;

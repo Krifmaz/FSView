@@ -146,6 +146,23 @@ pub struct Helper {
     pub audit_log: String,
     pub include_loop: bool,
     pub backup_dir: String,
+    /// Commands run before a pool branch repair (see [`commands`]).
+    pub repair_stop: Vec<Vec<String>>,
+    /// Commands run after a successful pool branch repair.
+    pub repair_post: Vec<Vec<String>>,
+}
+
+/// Parses a list of commands: `;` separates commands, whitespace separates
+/// arguments. There is no shell, so quotes, pipes and variables have no
+/// special meaning (an argument cannot contain spaces).
+///
+/// `pct exec 200 -- docker stop encore ; pct reboot 200` gives two
+/// commands.
+pub fn commands(s: &str) -> Vec<Vec<String>> {
+    s.split(';')
+        .map(|c| c.split_whitespace().map(str::to_string).collect::<Vec<_>>())
+        .filter(|c| !c.is_empty())
+        .collect()
 }
 
 pub fn load_helper(path: &Path) -> Result<Helper, String> {
@@ -157,6 +174,8 @@ pub fn load_helper(path: &Path) -> Result<Helper, String> {
         audit_log: v.string("audit_log", "/var/log/fsview/audit.log"),
         include_loop: v.boolean("include_loop_devices", false)?,
         backup_dir: v.string("backup_dir", "/var/lib/fsview-helper/backups"),
+        repair_stop: commands(&v.string("repair_stop", "")),
+        repair_post: commands(&v.string("repair_post", "")),
     })
 }
 
@@ -188,6 +207,18 @@ mod tests {
                 .writes_enabled,
             "writes must default to off"
         );
+    }
+
+    #[test]
+    fn command_lists() {
+        assert_eq!(
+            commands(" pct exec 200 -- docker stop encore ;; pct reboot 200 ; "),
+            vec![
+                vec!["pct", "exec", "200", "--", "docker", "stop", "encore"],
+                vec!["pct", "reboot", "200"],
+            ]
+        );
+        assert!(commands("").is_empty());
     }
 
     #[test]

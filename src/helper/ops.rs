@@ -35,6 +35,10 @@ pub(super) struct Plan {
 pub(super) enum Action {
     /// Run a command (argv, no shell).
     Run(Vec<String>),
+    /// Run a command whose failure does not stop the plan (e.g. stopping a
+    /// container that is already stopped). Its output and exit status are
+    /// still recorded.
+    RunBestEffort(Vec<String>),
     /// Copy `src` to the new file `dst` (fails if `dst` exists).
     Backup { src: PathBuf, dst: PathBuf },
     /// Create a directory (and missing parents) with mode 0755.
@@ -56,6 +60,7 @@ impl Action {
     pub(super) fn describe(&self) -> String {
         match self {
             Action::Run(c) => command_line(c),
+            Action::RunBestEffort(c) => format!("{} (errors ignored)", command_line(c)),
             Action::Backup { src, dst } => {
                 format!("cp --preserve=mode {} {}", src.display(), dst.display())
             }
@@ -85,7 +90,7 @@ fn class_of(op: &str) -> Option<Class> {
     Some(match op {
         OP_STATUS | OP_INVENTORY | OP_SMART_GET | OP_JOURNAL_KERNEL | OP_BOOT_COLLECT
         | OP_AUDIT_LIST | OP_HIDDEN_SCAN | OP_FSTAB_READ | OP_FSTAB_PREVIEW | OP_FSTAB_BACKUP
-        | OP_MOUNTS_LIST => Class::Read,
+        | OP_MOUNTS_LIST | OP_POOL_HEALTH | OP_POOL_LOCATE => Class::Read,
         OP_SMART_SELFTEST
         | OP_FSTAB_WRITE
         | OP_FSTAB_ROLLBACK
@@ -96,7 +101,7 @@ fn class_of(op: &str) -> Option<Class> {
         | OP_FS_LABEL
         | OP_PROTECT_MOUNTPOINTS
         | OP_POOL_HEAL => Class::Write,
-        OP_FS_FORMAT | OP_FS_REPAIR => Class::Destructive,
+        OP_FS_FORMAT | OP_FS_REPAIR | OP_POOL_REPAIR => Class::Destructive,
         _ => return None,
     })
 }
@@ -238,6 +243,14 @@ impl Server {
             }
             OP_FSTAB_READ => to(serde_json::to_value(self.fstab_read()?)),
             OP_MOUNTS_LIST => to(serde_json::to_value(self.mounts_list()?)),
+            OP_POOL_HEALTH => {
+                let p: PoolHealthParams = decode(req)?;
+                to(serde_json::to_value(self.pool_health(&p)?))
+            }
+            OP_POOL_LOCATE => {
+                let p: PoolLocateParams = decode(req)?;
+                to(serde_json::to_value(self.pool_locate(&p)?))
+            }
             OP_FSTAB_PREVIEW => {
                 let p: FstabPreviewParams = decode(req)?;
                 to(serde_json::to_value(self.fstab_preview(&p.doc)?))
@@ -287,6 +300,7 @@ impl Server {
             OP_UMOUNT => self.prep_umount(req),
             OP_PROTECT_MOUNTPOINTS => self.prep_protect_mountpoints(),
             OP_POOL_HEAL => self.prep_pool_heal(req),
+            OP_POOL_REPAIR => self.prep_pool_repair(req),
             OP_FS_FORMAT => self.prep_format(req),
             OP_FS_CHECK => self.prep_fs_check(req, false),
             OP_FS_REPAIR => self.prep_fs_check(req, true),
@@ -390,6 +404,23 @@ impl Server {
                         Err(e) => Some(e.to_string()),
                     }
                 }
+                Action::RunBestEffort(c) => {
+                    let args: Vec<&str> = c[1..].iter().map(String::as_str).collect();
+                    match self.runner.run(&c[0], &args) {
+                        Ok(o) => {
+                            output.push_str(&String::from_utf8_lossy(&o.stdout));
+                            output.push_str(&String::from_utf8_lossy(&o.stderr));
+                            if o.code != 0 {
+                                output.push_str(&format!(
+                                    "[{} exit status {}, continuing]\n",
+                                    c[0], o.code
+                                ));
+                            }
+                        }
+                        Err(e) => output.push_str(&format!("[{}: {e}, continuing]\n", c[0])),
+                    }
+                    None
+                }
                 other => super::fstabops::apply_file_action(other).err(),
             };
             if let Some(e) = err {
@@ -458,7 +489,7 @@ fn tolerated_exit(cmd: &[String], code: i32) -> bool {
     match cmd[0].as_str() {
         "smartctl" => code & 0x3 == 0,
         // 1 = errors corrected, 2 = reboot advised, 4 = errors left (-n)
-        "e2fsck" => code < if read_only { 8 } else { 4 },
+        "e2fsck" | "fsck.ext4" => code < if read_only { 8 } else { 4 },
         "xfs_repair" | "fsck.vfat" | "fsck.exfat" | "btrfs" => read_only && code == 1,
         // Protecting a mountpoint is best effort (e.g. a filesystem without
         // the immutable flag); the mount or unmount itself already worked.

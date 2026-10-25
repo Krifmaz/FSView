@@ -760,3 +760,311 @@ fn protect_mountpoints_plan() {
     assert!(r.plan.iter().any(|l| l.ends_with("/mnt/pool")), "{r:?}");
     assert!(r.plan.last().unwrap().starts_with("umount "), "{r:?}");
 }
+
+/// A pool of two branches: media2 (sdb, healthy apart from 8 remapped
+/// sectors) and media1 (sdi, shut down by the kernel after an aborted
+/// journal, and SMART shows pending and uncorrectable sectors).
+fn pool_health_server(stop: &[&str], post: &[&str]) -> (FsT, tempfile::TempDir) {
+    let f = fstab_server(true);
+    let d = tempfile::tempdir().unwrap();
+    let mounts = d.path().join("mounts");
+    std::fs::write(
+        &mounts,
+        "/dev/nvme0n1p2 / ext4 rw,relatime 0 0\n\
+         /dev/sdb /mnt/media2 ext4 rw,relatime 0 0\n\
+         /dev/sdi /mnt/media1 ext4 ro,relatime,emergency_ro 0 0\n\
+         mergerfs-pool /mnt/pool fuse.mergerfs rw,nosuid,nodev,allow_other 0 0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &f.fstab,
+        "/mnt/media2:/mnt/media1 /mnt/pool fuse.mergerfs defaults,allow_other,category.create=mfs,nofail 0 0\n\
+         UUID=a /mnt/media2 ext4 defaults,nofail 0 2\n\
+         UUID=b /mnt/media1 ext4 defaults,nofail 0 2\n",
+    )
+    .unwrap();
+    let dev = d.path().join("dev");
+    std::fs::create_dir_all(&dev).unwrap();
+    for n in ["sdb", "sdi"] {
+        std::fs::write(dev.join(n), b"").unwrap();
+    }
+    let journal = [
+        (1000, "s=1", "sd 2:0:9:0: [sdi] attempting task abort!scmd(0x1)"),
+        (1200, "s=2", "mpt2sas_cm0: log_info(0x31110d00): originator(PL), code(0x11)"),
+        (1500, "s=3", "EXT4-fs error (device sdi): ext4_journal_check_start:86: comm kworker: Detected aborted journal"),
+        (1501, "s=4", "EXT4-fs (sdi): Remounting filesystem read-only"),
+    ]
+    .iter()
+    .map(|(t, c, m)| {
+        json!({"__CURSOR": c, "__REALTIME_TIMESTAMP": (t * 1_000_000i64).to_string(),
+               "__MONOTONIC_TIMESTAMP": "1", "_BOOT_ID": "b", "PRIORITY": "3", "MESSAGE": m})
+        .to_string()
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
+    let fake = &f.t.fake;
+    let mut r = fake.responses.lock().unwrap();
+    let mut put = |k: &str, o: Output| {
+        r.insert(k.to_string(), o);
+    };
+    put(
+        "getfattr --only-values -n user.mergerfs.branches /mnt/pool/.mergerfs",
+        Fake::ok(b"/mnt/media2=RW:/mnt/media1=RO"),
+    );
+    put(
+        "getfattr --only-values -n user.mergerfs.fullpath /mnt/pool/music/a.flac",
+        Fake::ok(b"/mnt/media2/music/a.flac"),
+    );
+    put(
+        "journalctl -k -b -o json --no-pager -n 200000",
+        Fake::ok(journal.as_bytes()),
+    );
+    for (disk, scsi, sat) in [
+        ("sdb", "smart_sdb_scsi.json", "smart_sdb_sat_synthetic.json"),
+        ("sdi", "smart_sdi_scsi.json", "smart_ZXA0R1KK_sat.json"),
+    ] {
+        for wake in ["", " -n standby"] {
+            put(
+                &format!("smartctl -j -a{wake} /dev/{disk}"),
+                Fake::ok(&td(scsi)),
+            );
+            put(
+                &format!("smartctl -j -a{wake} -d sat /dev/{disk}"),
+                Fake::ok(&td(sat)),
+            );
+        }
+    }
+    drop(r);
+    let mut cfg = f.t.srv.cfg.clone();
+    cfg.mounts_file = mounts;
+    cfg.dev_dir = dev;
+    cfg.repair_stop = stop
+        .iter()
+        .map(|c| crate::config::commands(c).remove(0))
+        .collect();
+    cfg.repair_post = post
+        .iter()
+        .map(|c| crate::config::commands(c).remove(0))
+        .collect();
+    let audit = AuditLog::open(d.path().join("audit.log"), None).unwrap();
+    let srv = Server::new(cfg, f.t.fake.clone(), Some(audit));
+    let f = FsT {
+        t: T {
+            srv,
+            fake: f.t.fake.clone(),
+            _dirs: f.t._dirs,
+        },
+        ..f
+    };
+    (f, d)
+}
+
+#[test]
+fn pool_health_flags_branches() {
+    use crate::poolhealth::{FlagKind, PoolHealth};
+    let (f, _d) = pool_health_server(&[], &[]);
+    let r = f.t.srv.handle(&req(OP_POOL_HEALTH, json!({})), 1);
+    assert!(r.ok, "{r:?}");
+    let pools: Vec<PoolHealth> = serde_json::from_value(r.result).unwrap();
+    assert_eq!(pools.len(), 1);
+    let p = &pools[0];
+    assert_eq!(p.mountpoint, "/mnt/pool");
+    let (m2, m1) = (&p.branches[0], &p.branches[1]);
+
+    assert_eq!((m2.path.as_str(), m2.disk.as_str()), ("/mnt/media2", "sdb"));
+    let k2: Vec<FlagKind> = m2.flags.iter().map(|f| f.kind).collect();
+    assert_eq!(k2, [FlagKind::SmartReallocated], "{:?}", m2.flags);
+    assert!(!m2.read_only());
+    assert_eq!(m2.repair_blocker, "", "media2 can be repaired");
+
+    let k1: Vec<FlagKind> = m1.flags.iter().map(|f| f.kind).collect();
+    for k in [
+        FlagKind::BranchRo,
+        FlagKind::EmergencyRo,
+        FlagKind::Ext4Errors,
+        FlagKind::SmartUncorrected,
+    ] {
+        assert!(k1.contains(&k), "{k:?} missing: {:?}", m1.flags);
+    }
+    assert!(m1.read_only());
+    assert_eq!(m1.ext4_error_count, 2);
+    // the reset and the controller message before the first error
+    assert_eq!(m1.trigger.len(), 2);
+    assert!(m1.trigger[0].message.contains("task abort"));
+    assert!(
+        m1.repair_blocker.contains("uncorrected"),
+        "{}",
+        m1.repair_blocker
+    );
+
+    // the watcher skips SMART
+    let r =
+        f.t.srv
+            .handle(&req(OP_POOL_HEALTH, json!({"skip_smart": true})), 1);
+    let pools: Vec<PoolHealth> = serde_json::from_value(r.result).unwrap();
+    assert!(pools[0].branches[1].read_only());
+    assert!(pools[0].branches[1].smart.is_none());
+}
+
+#[test]
+fn pool_locate_file() {
+    let (f, _d) = pool_health_server(&[], &[]);
+    let r = f.t.srv.handle(
+        &req(
+            OP_POOL_LOCATE,
+            json!({"pool": "/mnt/pool", "path": "/mnt/pool/music/a.flac"}),
+        ),
+        1,
+    );
+    assert!(r.ok, "{r:?}");
+    let l: PoolLocateResult = serde_json::from_value(r.result).unwrap();
+    assert_eq!(l.fullpath, "/mnt/media2/music/a.flac");
+    assert_eq!(l.branch, "/mnt/media2");
+    for (pool, path, frag) in [
+        ("/mnt/pool", "../etc/shadow", ".."),
+        ("/mnt/pool", "/etc/passwd", "not inside"),
+        ("/mnt/nopool", "a", "not a mounted"),
+        ("/mnt/pool", "missing.flac", "not found"),
+    ] {
+        let r =
+            f.t.srv
+                .handle(&req(OP_POOL_LOCATE, json!({"pool": pool, "path": path})), 1);
+        assert!(!r.ok && r.error.contains(frag), "{path}: {r:?}");
+    }
+}
+
+#[test]
+fn pool_repair_rules_and_plan() {
+    if !tool_exists_for_test("fsck.ext4") {
+        return;
+    }
+    let (f, _d) = pool_health_server(&["pct exec 200 -- docker stop encore"], &["pct reboot 200"]);
+    let repair = |branch: &str, dry: bool, confirm: &str| {
+        f.t.srv.handle(
+            &storage_req(
+                OP_POOL_REPAIR,
+                json!({"pool": "/mnt/pool", "branch": branch}),
+                dry,
+                confirm,
+            ),
+            1,
+        )
+    };
+    // SMART shows pending/uncorrectable sectors on sdi: refused
+    let r = repair("/mnt/media1", true, "sdi");
+    assert!(!r.ok && r.error.contains("could not correct"), "{r:?}");
+    // not a branch
+    let r = repair("/mnt/other", true, "sdb");
+    assert!(!r.ok && r.error.contains("not a branch"), "{r:?}");
+    // destructive: the confirmation must name the disk
+    let r = repair("/mnt/media2", false, "wrong");
+    assert!(!r.ok && r.error.contains("confirmation"), "{r:?}");
+
+    let r = repair("/mnt/media2", true, "");
+    assert!(r.ok, "{r:?}");
+    let plan = &r.plan;
+    assert_eq!(
+        plan[0],
+        "pct exec 200 -- docker stop encore (errors ignored)"
+    );
+    assert_eq!(plan[1], "umount /mnt/pool");
+    assert_eq!(plan[2], "umount /mnt/media2");
+    assert_eq!(plan[3], "fsck.ext4 -f -y /dev/sdb");
+    assert!(
+        plan[4].ends_with(&format!("mount -T {} /mnt/media2", f.fstab.display())),
+        "{}",
+        plan[4]
+    );
+    assert!(
+        plan[5].ends_with(
+            "mergerfs -o allow_other,category.create=mfs /mnt/media2:/mnt/media1 /mnt/pool"
+        ),
+        "{}",
+        plan[5]
+    );
+    assert_eq!(plan[6], "pct reboot 200 (errors ignored)");
+    assert_eq!(plan.len(), 7);
+
+    // run it: fsck exit 1 (errors fixed) is success; the post command has
+    // no fake answer (fails) and is ignored
+    let fake = &f.t.fake;
+    {
+        let mut r = fake.responses.lock().unwrap();
+        for k in [
+            "pct exec 200 -- docker stop encore",
+            "umount /mnt/pool",
+            "umount /mnt/media2",
+        ] {
+            r.insert(k.into(), Fake::ok(b""));
+        }
+        r.insert(
+            "fsck.ext4 -f -y /dev/sdb".into(),
+            Output {
+                code: 1,
+                stdout: b"media2: ***** FILE SYSTEM WAS MODIFIED *****\n".to_vec(),
+                ..Default::default()
+            },
+        );
+        for line in &plan[4..6] {
+            r.insert(line.clone(), Fake::ok(b""));
+        }
+    }
+    let r = repair("/mnt/media2", false, "media2");
+    assert!(r.ok, "{r:?}");
+    let calls = fake.calls();
+    let i = |c: &str| {
+        calls
+            .iter()
+            .position(|x| x == c)
+            .unwrap_or_else(|| panic!("{c} not run: {calls:?}"))
+    };
+    assert!(i("umount /mnt/pool") < i("umount /mnt/media2"));
+    assert!(i("umount /mnt/media2") < i("fsck.ext4 -f -y /dev/sdb"));
+    assert!(i("fsck.ext4 -f -y /dev/sdb") < i("pct reboot 200"));
+    let rec = f.t.srv.audit.as_ref().unwrap().tail(1).unwrap().remove(0);
+    assert_eq!(rec.result, "ok");
+    assert!(rec.output.contains("FILE SYSTEM WAS MODIFIED"));
+    assert!(
+        rec.output.contains("pct exit status") || rec.output.contains("continuing"),
+        "{}",
+        rec.output
+    );
+}
+
+#[test]
+fn pool_repair_logs_trigger() {
+    if !tool_exists_for_test("fsck.ext4") {
+        return;
+    }
+    // media1's trigger is logged even though its repair is refused later;
+    // check the detail on a repairable branch with errors instead
+    let (f, d) = pool_health_server(&[], &[]);
+    std::fs::write(
+        d.path().join("mounts"),
+        "/dev/nvme0n1p2 / ext4 rw 0 0\n/dev/sdb /mnt/media2 ext4 rw 0 0\n/dev/sdi /mnt/media1 ext4 rw 0 0\nmergerfs-pool /mnt/pool fuse.mergerfs rw 0 0\n",
+    )
+    .unwrap();
+    // journal errors are on sdi; give sdb its own error
+    let line = json!({"__CURSOR": "s=9", "__REALTIME_TIMESTAMP": "1700000000", "__MONOTONIC_TIMESTAMP": "1",
+        "_BOOT_ID": "b", "PRIORITY": "3", "MESSAGE": "EXT4-fs error (device sdb): ext4_lookup: deleted inode referenced"});
+    let reset = json!({"__CURSOR": "s=8", "__REALTIME_TIMESTAMP": "1690000000", "__MONOTONIC_TIMESTAMP": "1",
+        "_BOOT_ID": "b", "PRIORITY": "4", "MESSAGE": "sd 2:0:3:0: [sdb] tag#9 timing out command, waited 180s"});
+    f.t.fake.responses.lock().unwrap().insert(
+        "journalctl -k -b -o json --no-pager -n 200000".into(),
+        Fake::ok(format!("{reset}\n{line}\n").as_bytes()),
+    );
+    let r = f.t.srv.handle(
+        &storage_req(
+            OP_POOL_REPAIR,
+            json!({"pool": "/mnt/pool", "branch": "/mnt/media2"}),
+            true,
+            "",
+        ),
+        1,
+    );
+    assert!(r.ok, "{r:?}");
+    let out = r.result["output"].as_str().unwrap();
+    assert!(out.contains("First ext4 error"), "{out}");
+    assert!(out.contains("timing out command"), "{out}");
+    assert!(out.contains("No stop commands are configured"), "{out}");
+}

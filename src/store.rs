@@ -42,6 +42,9 @@ pub struct Settings {
     /// Every minute, remount pool disks that dropped out and came
     /// back healthy, and undo read-only branches mergerfs set.
     pub auto_heal_pools: bool,
+    /// Every 5 minutes, check pool branches and record an event when one
+    /// goes read-only (and when it recovers).
+    pub pool_health_watch: bool,
 }
 
 impl Default for Settings {
@@ -54,6 +57,7 @@ impl Default for Settings {
             skip_confirm: false,
             acknowledged: HashMap::new(),
             auto_heal_pools: true,
+            pool_health_watch: false,
         }
     }
 }

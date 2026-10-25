@@ -8,6 +8,7 @@ mod audit;
 mod fstabops;
 mod hidden;
 mod ops;
+mod poolhealth;
 mod smart;
 mod storage;
 
@@ -45,6 +46,19 @@ pub struct Config {
     /// Directory for temporary mountpoints (default /tmp).
     pub scratch_dir: PathBuf,
     pub version: String,
+    /// Mount table read for pool health (default /proc/mounts).
+    pub mounts_file: PathBuf,
+    /// Where device nodes are looked up when pool health checks that a
+    /// branch's disk is still attached (default /dev; tests change it).
+    pub dev_dir: PathBuf,
+    /// Commands run before a pool branch repair, to stop programs that use
+    /// the pool (argv each, no shell; failures are ignored). Set only in the
+    /// root-owned helper configuration, never by the web process.
+    pub repair_stop: Vec<Vec<String>>,
+    /// Commands run after a successful branch repair, e.g. restarting an
+    /// LXC container that still holds the old mergerfs instance in its
+    /// mount namespace (argv each, no shell; failures are ignored).
+    pub repair_post: Vec<Vec<String>>,
 }
 
 impl Default for Config {
@@ -60,6 +74,10 @@ impl Default for Config {
             sys_root: "/sys".into(),
             scratch_dir: std::env::temp_dir(),
             version: crate::VERSION.into(),
+            mounts_file: "/proc/mounts".into(),
+            dev_dir: "/dev".into(),
+            repair_stop: vec![],
+            repair_post: vec![],
         }
     }
 }

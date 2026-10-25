@@ -296,7 +296,7 @@ impl Server {
         parse_mount_list(&r.stdout).map_err(failed)
     }
 
-    fn fstab_entries(&self) -> Result<Vec<FsEntry>, OpError> {
+    pub(super) fn fstab_entries(&self) -> Result<Vec<FsEntry>, OpError> {
         let text = std::fs::read_to_string(&self.cfg.fstab_path)
             .map_err(|e| failed(format!("{}: {e}", self.cfg.fstab_path.display())))?;
         Ok(fstab::parse(&text)
@@ -364,39 +364,7 @@ impl Server {
             }
             actions.push(Action::Mkdir(t.into()));
         }
-        let cmd = if is_mergerfs(e) {
-            // Started directly: older FUSE mount helpers pass fstab-only
-            // options such as nofail through to mergerfs, which rejects them.
-            let opts: Vec<&str> = e
-                .options
-                .split(',')
-                .filter(|o| {
-                    !o.is_empty()
-                        && ![
-                            "defaults", "nofail", "noauto", "auto", "_netdev", "user", "users",
-                        ]
-                        .contains(o)
-                        && !o.starts_with("x-")
-                        && !o.starts_with("comment=")
-                })
-                .collect();
-            let mut c = vec!["mergerfs".to_string()];
-            if !opts.is_empty() {
-                c.extend(["-o".into(), opts.join(",")]);
-            }
-            c.extend([
-                e.spec.trim_start_matches("mergerfs#").to_string(),
-                t.to_string(),
-            ]);
-            c
-        } else {
-            let mut c = vec!["mount".to_string()];
-            if self.cfg.fstab_path != Path::new("/etc/fstab") {
-                c.extend(["-T".into(), self.cfg.fstab_path.display().to_string()]);
-            }
-            c.push(t.into());
-            c
-        };
+        let cmd = self.mount_command(e);
         actions.push(Action::Run(own_scope(cmd)));
         let rejoin = !reattach.is_empty();
         actions.extend(reattach);
@@ -1349,11 +1317,52 @@ fn branch_owner<'a>(b: &str, pool: &FsEntry, entries: &'a [FsEntry]) -> Option<&
         .max_by_key(|o| o.file.len())
 }
 
+impl Server {
+    /// The command that mounts fstab entry `e`, before [`own_scope`].
+    /// mergerfs pools are started directly: older FUSE mount helpers pass
+    /// fstab-only options such as nofail through to mergerfs, which rejects
+    /// them. Everything else goes through `mount <target>` so the fstab
+    /// options apply.
+    pub(super) fn mount_command(&self, e: &FsEntry) -> Vec<String> {
+        if is_mergerfs(e) {
+            let opts: Vec<&str> = e
+                .options
+                .split(',')
+                .filter(|o| {
+                    !o.is_empty()
+                        && ![
+                            "defaults", "nofail", "noauto", "auto", "_netdev", "user", "users",
+                        ]
+                        .contains(o)
+                        && !o.starts_with("x-")
+                        && !o.starts_with("comment=")
+                })
+                .collect();
+            let mut c = vec!["mergerfs".to_string()];
+            if !opts.is_empty() {
+                c.extend(["-o".into(), opts.join(",")]);
+            }
+            c.extend([
+                e.spec.trim_start_matches("mergerfs#").to_string(),
+                e.file.clone(),
+            ]);
+            c
+        } else {
+            let mut c = vec!["mount".to_string()];
+            if self.cfg.fstab_path != Path::new("/etc/fstab") {
+                c.extend(["-T".into(), self.cfg.fstab_path.display().to_string()]);
+            }
+            c.push(e.file.clone());
+            c
+        }
+    }
+}
+
 /// Runs a mount command in its own transient systemd scope. FUSE
 /// filesystems (mergerfs, ntfs-3g) leave a daemon running; started from
 /// the helper it would sit in fsview-helper's cgroup and be killed when the
 /// helper restarts, e.g. on an FSView upgrade, taking the mount down.
-fn own_scope(cmd: Vec<String>) -> Vec<String> {
+pub(super) fn own_scope(cmd: Vec<String>) -> Vec<String> {
     if !Path::new("/run/systemd/system").exists() || !tool_exists("systemd-run") {
         return cmd;
     }

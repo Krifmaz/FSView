@@ -64,6 +64,9 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/mounts/mount", post(mount))
         .route("/api/mounts/umount", post(umount))
         .route("/api/mounts/protect", post(protect_mountpoints))
+        .route("/api/pools/health", get(pool_health))
+        .route("/api/pools/locate", get(pool_locate))
+        .route("/api/pools/repair", post(pool_repair))
         .route("/api/disks/{name}/format", post(format))
         .route("/api/disks/{name}/check", post(fs_check))
         .route("/api/disks/{name}/locate", post(locate))
@@ -1023,6 +1026,49 @@ async fn locate(
 
 /// fstab entries joined with live mounts, plus mergerfs pools with the
 /// state of each branch.
+/// `GET /api/pools/health`: per-branch health of every mounted mergerfs
+/// pool (mode, mount state, ext4 journal errors and their trigger, SMART).
+async fn pool_health(State(app): AppState, _u: User) -> Response {
+    let req = Request {
+        op: OP_POOL_HEALTH.into(),
+        params: params(&PoolHealthParams::default()),
+        ..Default::default()
+    };
+    match call_as::<Vec<crate::poolhealth::PoolHealth>>(&*app.helper, req).await {
+        Ok((v, _)) => ok(v),
+        Err(e) => helper_err(e),
+    }
+}
+
+/// `GET /api/pools/locate?pool=/mnt/pool&path=music/a.flac`: which branch
+/// a file lives on (`user.mergerfs.fullpath`).
+async fn pool_locate(
+    State(app): AppState,
+    _u: User,
+    Query(q): Query<PoolLocateParams>,
+) -> Response {
+    let req = Request {
+        op: OP_POOL_LOCATE.into(),
+        params: params(&q),
+        ..Default::default()
+    };
+    match call_as::<PoolLocateResult>(&*app.helper, req).await {
+        Ok((v, _)) => ok(v),
+        Err(e) => helper_err(e),
+    }
+}
+
+/// `POST /api/pools/repair`: guided repair of one branch. Destructive (the
+/// disk's name or label must be typed); a dry run returns the plan and the
+/// kernel messages that led to the first ext4 error.
+async fn pool_repair(
+    State(app): AppState,
+    User(u, ip): User,
+    JsonBody(b): JsonBody<WriteBody<PoolRepairParams>>,
+) -> Response {
+    helper_write(&app, (u, ip), OP_POOL_REPAIR, b).await
+}
+
 async fn storage(State(app): AppState, _u: User) -> Response {
     let fs = call_as::<FstabState>(
         &*app.helper,

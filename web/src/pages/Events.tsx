@@ -4,7 +4,7 @@ import { ErrorBox, Loading } from "../components";
 import type { DiskEvent } from "../types";
 import { fmtSec, fmtTime, useFetch } from "../util";
 
-const CATEGORIES = ["", "io_error", "medium_error", "reset", "link_down", "appeared", "removed", "filesystem"];
+const CATEGORIES = ["", "io_error", "medium_error", "reset", "link_down", "appeared", "removed", "filesystem", "pool"];
 
 export default function EventsPage() {
   const [severity, setSeverity] = useState("");

@@ -3,10 +3,11 @@ import { Layers, Plus } from "lucide-react";
 import { api } from "../api";
 import { useAction, explainError } from "../actions";
 import { ErrorBox, Loading, UsageBar } from "../components";
-import type { FsEntry, FstabDoc, FstabPreview, FstabState, Pool, StorageEntry, StorageView, WriteResult } from "../types";
+import type { FsEntry, FstabDoc, FstabPreview, FstabState, Pool, PoolHealth, StorageEntry, StorageView, WriteResult } from "../types";
 import { fmtBytes, useFetch } from "../util";
 import { DiffView } from "./Fstab";
 import { HealthBadge, useHealthMap } from "../life";
+import PoolHealthPanel from "./PoolHealth";
 
 const POLICIES: [string, string][] = [
   ["mfs", "Most free space: new files go to the disk with the most free space (recommended)"],
@@ -364,7 +365,11 @@ function PoolEditor({ form, data, onClose, onSaved }: { form: Form; data: Storag
 
 export default function PoolsPage() {
   const { data, error, loading, reload } = useFetch(() => api.get<StorageView>("/api/storage"), [], 30000);
-  const act = useAction(reload);
+  const poolHealth = useFetch(() => api.get<PoolHealth[]>("/api/pools/health"), [], 300000);
+  const act = useAction(() => {
+    reload();
+    poolHealth.reload();
+  });
   const health = useHealthMap();
   const [editor, setEditor] = useState<Form | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -540,6 +545,15 @@ export default function PoolsPage() {
                   </tbody>
                 </table>
               </div>
+              {p.mounted && poolHealth.data?.find((h) => h.mountpoint === p.file) && (
+                <PoolHealthPanel
+                  health={poolHealth.data.find((h) => h.mountpoint === p.file)!}
+                  labels={Object.fromEntries(data.entries.filter((e) => e.device?.label).map((e) => [e.file, e.device!.label!]))}
+                  writes={data.writes_enabled}
+                  act={act}
+                />
+              )}
+              {p.mounted && poolHealth.error && <div className="alert warn small" style={{ marginTop: 10 }}>Pool health: {poolHealth.error}</div>}
             </div>
           );
         })}

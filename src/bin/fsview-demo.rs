@@ -715,6 +715,8 @@ impl Demo {
                 .unwrap()
             }
             OP_MOUNTS_LIST => serde_json::to_value(&*self.mounts.lock().unwrap()).unwrap(),
+            // The demo has no mergerfs pools mounted.
+            OP_POOL_HEALTH => serde_json::json!([]),
             OP_FSTAB_PREVIEW => {
                 let p: FstabPreviewParams =
                     serde_json::from_value(req.params.clone()).map_err(|e| bad(e.to_string()))?;

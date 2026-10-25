@@ -337,6 +337,70 @@ export interface Settings {
   ignored_elements?: string[];
   skip_confirm?: boolean;
   auto_heal_pools?: boolean;
+  pool_health_watch?: boolean;
+}
+
+/** A kernel log line (journald entry). */
+export interface JournalLine {
+  cursor: string;
+  realtime_us: number;
+  message: string;
+}
+
+export type HealthFlagKind =
+  | "branch_ro"
+  | "branch_nc"
+  | "mount_ro"
+  | "emergency_ro"
+  | "not_mounted"
+  | "ext4_errors"
+  | "smart_uncorrected"
+  | "smart_reallocated"
+  | "smart_unknown";
+
+export interface HealthFlag {
+  kind: HealthFlagKind;
+  severity: "error" | "warn" | "info";
+  detail: string;
+}
+
+export interface SmartCounts {
+  reallocated?: number;
+  pending?: number;
+  offline_uncorrectable?: number;
+  reported_uncorrectable?: number;
+  sas_uncorrected?: number;
+}
+
+export interface BranchHealth {
+  path: string;
+  mode: string;
+  mount_target: string;
+  device: string;
+  disk: string;
+  fstype: string;
+  mount_options: string[];
+  flags: HealthFlag[];
+  ext4_error_count: number;
+  ext4_errors: JournalLine[];
+  first_error?: JournalLine;
+  trigger: JournalLine[];
+  smart?: SmartCounts;
+  repair_blocker: string;
+}
+
+export interface PoolHealth {
+  mountpoint: string;
+  source: string;
+  branches: BranchHealth[];
+  error?: string;
+}
+
+export interface PoolLocate {
+  path: string;
+  fullpath: string;
+  branch: string;
+  allpaths?: string[];
 }
 
 export interface StatusInfo {

@@ -175,6 +175,8 @@ fn run_helper(path: &Path) -> Result<(), String> {
         scratch_dir: scratch,
         backup_dir: PathBuf::from(&cfg.backup_dir),
         version: VERSION.into(),
+        repair_stop: cfg.repair_stop.clone(),
+        repair_post: cfg.repair_post.clone(),
         ..Default::default()
     };
     let srv = helper::Server::new(hc, Arc::new(runner::Exec), Some(audit));

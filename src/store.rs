@@ -39,7 +39,7 @@ pub struct Settings {
     pub skip_confirm: bool,
     /// Acknowledged SMART error counts by disk serial number.
     pub acknowledged: HashMap<String, Ack>,
-    /// Every few minutes, remount pool disks that dropped out and came
+    /// Every minute, remount pool disks that dropped out and came
     /// back healthy, and undo read-only branches mergerfs set.
     pub auto_heal_pools: bool,
 }

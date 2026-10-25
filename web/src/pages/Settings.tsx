@@ -148,7 +148,7 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
             <span>
               Auto-heal pools
               <div className="small dim">
-                Every 5 minutes, remounts pool disks that dropped out and came back, and makes branches the pool switched to read-only writable again. Disks SMART rates critical, or whose filesystem has recorded errors, are left alone. Every fix is in the audit log.
+                Every minute, takes disks that dropped out of the pool out of the way of new files, remounts them when they come back, and makes branches the pool switched to read-only writable again. Disks SMART rates critical, or whose filesystem has recorded errors, are left alone. Every fix is in the audit log.
               </div>
             </span>
           </label>

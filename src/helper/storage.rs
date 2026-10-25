@@ -1060,8 +1060,9 @@ enum Owner {
     Root,
     /// Mounted; `ro` when mounted read-only.
     Up { ro: bool },
-    /// Still mounted but its device has vanished.
-    Gone,
+    /// Still mounted, but its disk dropped out (the device node is gone
+    /// or now belongs to a newer attach), so every access fails.
+    Stale(String),
     /// The fstab mountpoint is not mounted.
     Down(String),
 }
@@ -1111,7 +1112,6 @@ fn heal_branches(
             .as_ref()
             .is_some_and(|l| mode_word(l) != mode_word(&b.mode));
         match &b.owner {
-            Owner::Gone => keep(b, &mut desired),
             Owner::Up { ro: true } => desired.push(format!("{}=RO", b.path)),
             Owner::Root | Owner::Up { .. } => {
                 if upgrade {
@@ -1127,7 +1127,7 @@ fn heal_branches(
                 }
                 desired.push(want(b));
             }
-            Owner::Down(t) => {
+            Owner::Down(t) | Owner::Stale(t) => {
                 // Only branches that dropped out are brought back; one that
                 // was detached on purpose (FSView unmount) is not in the pool.
                 if b.live.is_none() {
@@ -1136,7 +1136,13 @@ fn heal_branches(
                 if !remount.contains(t) {
                     if let Some(why) = blocker(b) {
                         notes.push(format!("{t} not remounted: {why}"));
-                        keep(b, &mut desired);
+                        if matches!(b.owner, Owner::Stale(_)) {
+                            // A dead mount still looks like free space, so
+                            // new files would keep failing on it.
+                            desired.push(format!("{}=RO", b.path));
+                        } else {
+                            keep(b, &mut desired);
+                        }
                         continue;
                     }
                     remount.push(t.clone());
@@ -1146,6 +1152,27 @@ fn heal_branches(
         }
     }
     (desired, remount, notes)
+}
+
+/// A block filesystem whose disk dropped out while mounted: its device
+/// node is gone, or the name now belongs to a fresh attach of the disk.
+fn device_lost(m: &Mount) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if !m.source.starts_with("/dev/") {
+        return false;
+    }
+    let Ok(dev) = std::fs::metadata(&m.source) else {
+        return true;
+    };
+    // Only filesystems whose st_dev is the block device itself.
+    if ![
+        "ext2", "ext3", "ext4", "xfs", "vfat", "exfat", "ntfs3", "f2fs",
+    ]
+    .contains(&m.fstype.as_str())
+    {
+        return false;
+    }
+    std::fs::metadata(&m.target).is_ok_and(|t| t.dev() != dev.rdev())
 }
 
 /// Device node an fstab spec refers to, if it is a local block device.
@@ -1201,12 +1228,7 @@ impl Server {
                     let owner = match branch_owner(&path, pool, &entries) {
                         None => Owner::Root,
                         Some(o) => match mounts.iter().find(|m| m.target == o.file) {
-                            Some(m)
-                                if m.source.starts_with("/dev/")
-                                    && !Path::new(&m.source).exists() =>
-                            {
-                                Owner::Gone
-                            }
+                            Some(m) if device_lost(m) => Owner::Stale(o.file.clone()),
                             Some(m) => Owner::Up {
                                 ro: m.options.split(',').any(|x| x == "ro"),
                             },
@@ -1224,7 +1246,7 @@ impl Server {
             let mut blocker = |b: &HealBranch| -> Option<String> {
                 let (dev, fstype) = match &b.owner {
                     Owner::Root => return None,
-                    Owner::Down(t) => {
+                    Owner::Down(t) | Owner::Stale(t) => {
                         let e = entries.iter().find(|e| &e.file == t)?;
                         let Some(d) = spec_device(&e.spec) else {
                             return Some("not a local disk".into());
@@ -1276,6 +1298,12 @@ impl Server {
             for t in remount {
                 if done.contains(&t) {
                     continue;
+                }
+                if mounts.iter().any(|m| m.target == t) {
+                    // The dead mount of a disk that dropped out and came
+                    // back; whatever is still open on it is already lost.
+                    plan.actions
+                        .push(Action::Run(vec!["umount".into(), "-l".into(), t.clone()]));
                 }
                 let mut c = vec!["mount".to_string()];
                 if self.cfg.fstab_path != Path::new("/etc/fstab") {
@@ -1358,8 +1386,8 @@ mod tests {
             b("/mnt/c", "NC", Some("NC"), Owner::Up { ro: false }),
             // unmounted on purpose (detached): left out
             b("/mnt/d", "", None, Owner::Down("/mnt/d".into())),
-            // device gone: untouched
-            b("/mnt/e", "", Some("RO"), Owner::Gone),
+            // disk dropped out while mounted and is back: remount
+            b("/mnt/e", "", Some("RW"), Owner::Stale("/mnt/e".into())),
             // filesystem remounted read-only: stays RO
             b("/mnt/f", "", Some("RW"), Owner::Up { ro: true }),
         ];
@@ -1370,11 +1398,11 @@ mod tests {
                 "/mnt/a=RW",
                 "/mnt/b=RW",
                 "/mnt/c=NC",
-                "/mnt/e=RO",
+                "/mnt/e=RW",
                 "/mnt/f=RO"
             ]
         );
-        assert_eq!(r, ["/mnt/a"]);
+        assert_eq!(r, ["/mnt/a", "/mnt/e"]);
         assert!(n.is_empty());
 
         // a failing disk is neither remounted nor made writable
@@ -1392,7 +1420,8 @@ mod tests {
             ]
         );
         assert!(r.is_empty());
-        assert_eq!(n.len(), 2);
+        // the dead mount is made read-only so new files go elsewhere
+        assert_eq!(n.len(), 3);
 
         // healthy pools never ask about their disks
         let ok = vec![b("/mnt/a", "", Some("RW"), Owner::Up { ro: false })];

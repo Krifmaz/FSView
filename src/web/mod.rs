@@ -257,7 +257,7 @@ impl App {
     /// Puts dropped pool disks back once they return healthy (see
     /// OP_POOL_HEAL). Disks SMART rates critical are left alone.
     async fn pool_heal_loop(self: Arc<Self>) {
-        let mut t = tokio::time::interval(Duration::from_secs(300));
+        let mut t = tokio::time::interval(Duration::from_secs(60));
         t.tick().await;
         loop {
             t.tick().await;

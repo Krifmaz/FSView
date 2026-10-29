@@ -697,6 +697,19 @@ pub fn parse_verify(stdout: &str, stderr: &str, doc: &Doc, will_create: &[String
             _ => None,
         })
         .collect();
+    // Entries with nofail: a missing device does not stop the boot, so it is
+    // a warning, not a reason to refuse saving unrelated changes (e.g. taking
+    // a failing disk out of a pool while it cannot even report its UUID).
+    let nofail: Vec<&str> = doc
+        .lines
+        .iter()
+        .filter_map(|l| match l {
+            Line::Entry { entry, .. } if entry.options.split(',').any(|o| o == "nofail") => {
+                Some(entry.file.as_str())
+            }
+            _ => None,
+        })
+        .collect();
     let mut v = Verify::default();
     // stderr carries "findmnt: <file>: parse error at line N -- ignored"
     // and (on newer util-linux) the summary line.
@@ -734,6 +747,9 @@ pub fn parse_verify(stdout: &str, stderr: &str, doc: &Doc, will_create: &[String
                     || msg.contains("unsupported source tag")))
             || (will_create.iter().any(|w| w == &target)
                 && msg.starts_with("unreachable on boot required target"));
+        let is_err = is_err
+            && !(nofail.contains(&target.as_str())
+                && msg.starts_with("unreachable on boot required source"));
         let full = format!("{target}: {msg}");
         if noise {
             v.ignored.push(full);
@@ -920,8 +936,8 @@ mod tests {
 
     #[test]
     fn verify_parsing() {
-        let doc = parse("UUID=x /mnt/x ext4 defaults,nofail 0 2\n/mnt/a /mnt/pool fuse.mergerfs allow_other 0 0\n");
-        let out = "/mnt/x\n   [E] unreachable on boot required target: No such file or directory\n   [ ] userspace options: nofail\n   [E] unreachable on boot required source: UUID=x\n/mnt/pool\n   [W] unreachable source: /mnt/a: No such file or directory\n   [W] fuse.mergerfs seems unsupported by the current kernel\n   [W] cannot detect on-disk filesystem type (No such file or directory)\n   [E] unsupported source tag: /mnt/a:/mnt/b=NC\n\n0 parse errors, 0 errors, 1 warning\n";
+        let doc = parse("UUID=x /mnt/x ext4 defaults,nofail 0 2\n/mnt/a /mnt/pool fuse.mergerfs allow_other 0 0\nUUID=y /mnt/y ext4 defaults 0 2\n");
+        let out = "/mnt/x\n   [E] unreachable on boot required target: No such file or directory\n   [ ] userspace options: nofail\n   [E] unreachable on boot required source: UUID=x\n/mnt/pool\n   [W] unreachable source: /mnt/a: No such file or directory\n   [W] fuse.mergerfs seems unsupported by the current kernel\n   [W] cannot detect on-disk filesystem type (No such file or directory)\n   [E] unsupported source tag: /mnt/a:/mnt/b=NC\n\n/mnt/y\n   [E] unreachable on boot required source: UUID=y\n\n0 parse errors, 0 errors, 1 warning\n";
         let v = parse_verify(
             out,
             "findmnt: f: parse error at line 3 -- ignored\n1 parse error, 2 errors, 3 warnings\n",
@@ -932,12 +948,17 @@ mod tests {
             v.errors,
             vec![
                 "f: parse error at line 3 -- ignored",
-                "/mnt/x: unreachable on boot required source: UUID=x"
+                // without nofail a missing disk would stop the boot
+                "/mnt/y: unreachable on boot required source: UUID=y"
             ]
         );
+        // with nofail it only warns (a dead disk must not block other edits)
         assert_eq!(
             v.warnings,
-            vec!["/mnt/pool: unreachable source: /mnt/a: No such file or directory"]
+            vec![
+                "/mnt/x: unreachable on boot required source: UUID=x",
+                "/mnt/pool: unreachable source: /mnt/a: No such file or directory"
+            ]
         );
         assert_eq!(v.ignored.len(), 4);
         assert!(!v.ok);

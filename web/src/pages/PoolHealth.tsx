@@ -11,6 +11,7 @@ const FLAG_LABEL: Record<HealthFlag["kind"], string> = {
   emergency_ro: "emergency_ro",
   not_mounted: "disk not mounted",
   ext4_errors: "ext4 errors",
+  io_errors: "I/O errors",
   smart_uncorrected: "SMART uncorrected",
   smart_reallocated: "SMART reallocated",
   smart_unknown: "SMART unknown",
@@ -46,6 +47,15 @@ function BranchDetail({ b }: { b: BranchHealth }) {
             disk dropping off; they usually point at the cable, bay or controller rather than the filesystem.
           </div>
           {b.trigger.length ? <Lines lines={b.trigger} /> : <div className="dim small">No kernel messages in that window.</div>}
+        </div>
+      )}
+      {b.io_errors.length > 0 && (
+        <div>
+          <div className="small">
+            <b>Latest read/write errors</b> ({b.io_error_count} this boot). The disk could not read or write these blocks; while it does, creating files can fail
+            on the whole pool. Take the branch out of the pool and copy its data off.
+          </div>
+          <Lines lines={b.io_errors} />
         </div>
       )}
       {b.ext4_errors.length > 0 && (

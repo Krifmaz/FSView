@@ -313,6 +313,18 @@ impl Server {
             )));
         }
 
+        let journal = self.boot_kernel_log();
+        let kname = ph::kernel_name(&device);
+        let io = journal
+            .iter()
+            .filter(|e| ph::is_io_error(&e.message, &[kname, disk.as_str()]))
+            .count();
+        if io > 0 {
+            return Err(bad(format!(
+                "{disk} returned {io} read/write error(s) this boot; fsck on a disk that cannot read reliably can make things worse. Copy the data off (e.g. ddrescue) or move the disk to another bay and reboot, then check again"
+            )));
+        }
+
         let mut actions = vec![];
         for c in &self.cfg.repair_stop {
             actions.push(Action::RunBestEffort(c.clone()));
@@ -331,8 +343,7 @@ impl Server {
             actions.push(Action::RunBestEffort(c.clone()));
         }
 
-        let journal = self.boot_kernel_log();
-        let errors = ph::ext4_errors(&journal, ph::kernel_name(&device));
+        let errors = ph::ext4_errors(&journal, kname);
         let mut detail = format!(
             "Repairing branch {} of {pool}: {} ({device}, disk {disk}, SMART: {}).\n",
             b.path,
@@ -420,6 +431,9 @@ fn repair_blocker(
     }
     if !entries.iter().any(|e| e.file == h.mount_target) {
         return format!("{} is not in fstab", h.mount_target);
+    }
+    if h.io_error_count > 0 {
+        return "the disk returned read/write errors this boot: copy the data off instead".into();
     }
     if h.smart.as_ref().is_some_and(|s| s.uncorrected() > 0) {
         return "SMART shows uncorrected errors: copy the data off instead".into();

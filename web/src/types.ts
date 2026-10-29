@@ -354,6 +354,7 @@ export type HealthFlagKind =
   | "emergency_ro"
   | "not_mounted"
   | "ext4_errors"
+  | "io_errors"
   | "smart_uncorrected"
   | "smart_reallocated"
   | "smart_unknown";
@@ -383,6 +384,8 @@ export interface BranchHealth {
   flags: HealthFlag[];
   ext4_error_count: number;
   ext4_errors: JournalLine[];
+  io_error_count: number;
+  io_errors: JournalLine[];
   first_error?: JournalLine;
   trigger: JournalLine[];
   smart?: SmartCounts;

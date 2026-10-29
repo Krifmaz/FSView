@@ -184,6 +184,7 @@ pub fn kernel_name(dev: &str) -> &str {
 
 struct Patterns {
     trouble: Regex,
+    io: Regex,
 }
 
 fn patterns() -> &'static Patterns {
@@ -191,6 +192,10 @@ fn patterns() -> &'static Patterns {
     P.get_or_init(|| Patterns {
         trouble: Regex::new(
             r"(?i)(EXT4-fs error|journal has aborted|detected aborted journal|Remounting filesystem read-only)",
+        )
+        .expect("valid regex"),
+        io: Regex::new(
+            r"(?i)(I/O error|error -5\b|Medium Error|Internal target failure|Unrecovered read error)",
         )
         .expect("valid regex"),
     })
@@ -202,15 +207,28 @@ fn patterns() -> &'static Patterns {
 /// as ext4 prints it (`(device sdc1)`, `EXT4-fs (sdc1)`) or as the journal
 /// thread (`jbd2/sdc1-8`).
 pub fn is_ext4_error(msg: &str, kname: &str) -> bool {
-    if kname.is_empty() || !patterns().trouble.is_match(msg) {
-        return false;
-    }
-    msg.match_indices(kname).any(|(i, _)| {
+    !kname.is_empty() && patterns().trouble.is_match(msg) && mentions(msg, kname)
+}
+
+/// True when `name` appears in `msg` as a whole word (`sdc1` does not
+/// match `sdc10`).
+fn mentions(msg: &str, name: &str) -> bool {
+    msg.match_indices(name).any(|(i, _)| {
         let before = msg[..i].chars().next_back();
-        let after = msg[i + kname.len()..].chars().next();
+        let after = msg[i + name.len()..].chars().next();
         let edge = |c: Option<char>| c.is_none_or(|c| !c.is_ascii_alphanumeric());
         edge(before) && edge(after)
     })
+}
+
+/// True when a kernel message is a read or write failure on one of `names`
+/// (the filesystem's device and its disk): block layer `I/O error, dev
+/// sdh`, `Buffer I/O error`, SCSI medium errors and target failures, or a
+/// filesystem reporting `error -5` (EIO). These are often logged only as
+/// ext4 *warnings*, so [`is_ext4_error`] alone misses a disk that cannot
+/// read one of its directories.
+pub fn is_io_error(msg: &str, names: &[&str]) -> bool {
+    patterns().io.is_match(msg) && names.iter().any(|n| !n.is_empty() && mentions(msg, n))
 }
 
 /// The kernel messages that are ext4 journal trouble on `kname`, oldest
@@ -335,6 +353,10 @@ pub enum FlagKind {
     NotMounted,
     /// ext4 journal errors in the kernel log for this boot.
     Ext4Errors,
+    /// Reads or writes on the branch's disk failed this boot (block layer
+    /// I/O errors, medium errors, EIO from the filesystem). One unreadable
+    /// directory on one branch makes file creation fail on the whole pool.
+    IoErrors,
     /// The disk reports errors it could not correct.
     SmartUncorrected,
     /// The disk has remapped sectors (early wear sign, data intact).
@@ -384,6 +406,10 @@ pub struct BranchHealth {
     pub ext4_error_count: usize,
     /// The latest ext4 error messages (at most [`MAX_ERROR_LINES`]).
     pub ext4_errors: Vec<Entry>,
+    /// Number of read/write failures on the device or its disk this boot.
+    pub io_error_count: usize,
+    /// The latest of them (at most [`MAX_ERROR_LINES`]).
+    pub io_errors: Vec<Entry>,
     /// The first ext4 error this boot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_error: Option<Entry>,
@@ -548,6 +574,34 @@ pub fn assess_branch(i: BranchInput<'_>) -> BranchHealth {
             ),
         ));
     }
+    let names = [kname, i.disk.as_str()];
+    let io: Vec<&Entry> = if i.device.is_empty() {
+        vec![]
+    } else {
+        i.journal
+            .iter()
+            .filter(|e| is_io_error(&e.message, &names))
+            .collect()
+    };
+    h.io_error_count = io.len();
+    if let (Some(first), Some(last)) = (io.first(), io.last()) {
+        h.io_errors = io
+            .iter()
+            .skip(io.len().saturating_sub(MAX_ERROR_LINES))
+            .map(|e| (*e).clone())
+            .collect();
+        flags.push(flag(
+            FlagKind::IoErrors,
+            "error",
+            format!(
+                "{} read/write error message(s) for {} this boot, {} to {}",
+                io.len(),
+                if i.disk.is_empty() { kname } else { &i.disk },
+                first.time().format("%Y-%m-%d %H:%M"),
+                last.time().format("%Y-%m-%d %H:%M UTC")
+            ),
+        ));
+    }
     match &i.smart {
         Some(s) if s.uncorrected() > 0 => flags.push(flag(
             FlagKind::SmartUncorrected,
@@ -696,6 +750,26 @@ mergerfs-drivepool /mnt/drivepool fuse.mergerfs rw,nosuid,nodev,relatime,user_id
         );
         let t = trigger_context(&j, errs[0], 10);
         assert!(t.is_empty());
+    }
+
+    #[test]
+    fn io_errors() {
+        let n = ["sdh", "sdh"];
+        for m in [
+            "I/O error, dev sdh, sector 9906979072 op 0x0:(READ) flags 0x803000",
+            "EXT4-fs warning (device sdh): dx_probe:791: inode #154796033: lblock 0: comm fuse.read: error -5 reading directory block",
+            "Buffer I/O error on dev sdh, logical block 1465130624, async page read",
+            "sd 2:0:18:0: [sdh] tag#1005 Add. Sense: Internal target failure",
+        ] {
+            assert!(is_io_error(m, &n), "{m}");
+        }
+        assert!(!is_io_error("I/O error, dev sdhx, sector 1", &n));
+        assert!(!is_io_error("EXT4-fs (sdh): mounted filesystem", &n));
+        // partition filesystem, errors logged against the disk
+        assert!(is_io_error(
+            "I/O error, dev sdc, sector 5",
+            &["sdc1", "sdc"]
+        ));
     }
 
     #[test]

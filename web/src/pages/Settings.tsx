@@ -52,6 +52,15 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
     }
   };
 
+  const toggleSetting = async (patch: Partial<Settings>) => {
+    if (!form) return;
+    try {
+      setForm(await api.put<Settings>("/api/settings", { ...form, ...patch }));
+    } catch (err: any) {
+      setMsg({ kind: "error", text: err.message });
+    }
+  };
+
   const toggleWatch = async (on: boolean) => {
     if (!form) return;
     try {
@@ -158,6 +167,28 @@ export default function SettingsPage({ user, onLogout }: { user: string; onLogou
               Auto-heal pools
               <div className="small dim">
                 Every minute, takes disks that dropped out of the pool out of the way of new files, remounts them when they come back, and makes branches the pool switched to read-only writable again. Disks SMART rates critical, or whose filesystem has recorded errors, are left alone. Every fix is in the audit log.
+              </div>
+            </span>
+          </label>
+          <label className="check" style={{ alignItems: "flex-start" }}>
+            <input type="checkbox" checked={form?.auto_repair_branches !== false} disabled={!form} onChange={(e) => toggleSetting({ auto_repair_branches: e.target.checked })} />
+            <span>
+              Auto-repair pool disks
+              <div className="small dim">
+                Part of auto-heal. When a pool disk's filesystem records errors (for example after the drive stalled and dropped writes), FSView takes just that disk
+                out of the running pool once nothing has a file open on it, runs fsck, and puts it back. The pool and your containers keep running. Disks with read errors
+                or bad SMART are left read-only for you to copy off, and each disk is repaired at most 3 times a day.
+              </div>
+            </span>
+          </label>
+          <label className="check" style={{ alignItems: "flex-start" }}>
+            <input type="checkbox" checked={form?.smr_protection !== false} disabled={!form} onChange={(e) => toggleSetting({ smr_protection: e.target.checked })} />
+            <span>
+              SMR protection
+              <div className="small dim">
+                Shingled (SMR) drives stall under long write bursts and can drop queued writes. FSView gives known SMR models (and disks you mark on their page) queue depth 1
+                and a 180 s timeout, and keeps writeback batches small, re-applied every minute so it survives reconnects. Turning it off stops re-applying; the values
+                reset at the next reboot.
               </div>
             </span>
           </label>

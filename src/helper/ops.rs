@@ -52,6 +52,10 @@ pub(super) enum Action {
     },
     /// Write a value to a sysfs attribute (e.g. an enclosure locate LED).
     WriteSysfs { path: PathBuf, value: String },
+    /// Like `WriteSysfs`, but a failure (the device does not support the
+    /// setting) is recorded and does not stop the plan; that path is not
+    /// tried again until the helper restarts.
+    TrySysfs { path: PathBuf, value: String },
     /// Wait up to 30 s for a device node to appear.
     WaitDevice(PathBuf),
 }
@@ -71,6 +75,9 @@ impl Action {
                 content.len()
             ),
             Action::WriteSysfs { path, value } => format!("echo {value} > {}", path.display()),
+            Action::TrySysfs { path, value } => {
+                format!("echo {value} > {} (errors ignored)", path.display())
+            }
             Action::WaitDevice(p) => format!("wait for {}", p.display()),
         }
     }
@@ -100,7 +107,8 @@ fn class_of(op: &str) -> Option<Class> {
         | OP_LOCATE
         | OP_FS_LABEL
         | OP_PROTECT_MOUNTPOINTS
-        | OP_POOL_HEAL => Class::Write,
+        | OP_POOL_HEAL
+        | OP_DISK_TUNE => Class::Write,
         OP_FS_FORMAT | OP_FS_REPAIR | OP_POOL_REPAIR => Class::Destructive,
         _ => return None,
     })
@@ -301,6 +309,7 @@ impl Server {
             OP_PROTECT_MOUNTPOINTS => self.prep_protect_mountpoints(),
             OP_POOL_HEAL => self.prep_pool_heal(req),
             OP_POOL_REPAIR => self.prep_pool_repair(req),
+            OP_DISK_TUNE => self.prep_disk_tune(req),
             OP_FS_FORMAT => self.prep_format(req),
             OP_FS_CHECK => self.prep_fs_check(req, false),
             OP_FS_REPAIR => self.prep_fs_check(req, true),
@@ -327,7 +336,24 @@ impl Server {
             self.audit(rec.clone());
             Response::err(code, msg)
         };
-        if !self.cfg.writes_enabled && req.op == OP_POOL_HEAL {
+        // Background upkeep (heal, tuning) runs every minute: when there is
+        // nothing to do, or writes are off, it leaves no audit entry.
+        let quiet = req.op == OP_POOL_HEAL || req.op == OP_DISK_TUNE;
+        // One heal at a time: a heal can include an fsck that runs longer
+        // than the next scheduled check.
+        let _heal = if req.op == OP_POOL_HEAL {
+            match self.heal_lock.try_lock() {
+                Ok(g) => Some(g),
+                Err(_) => {
+                    return Response::ok(
+                        &serde_json::json!({"summary": "a heal is already running"}),
+                    )
+                }
+            }
+        } else {
+            None
+        };
+        if !self.cfg.writes_enabled && quiet {
             return Response::err(CODE_WRITES_OFF, "writes are disabled");
         }
         if !self.cfg.writes_enabled {
@@ -338,7 +364,7 @@ impl Server {
             Err((code, msg)) => return reject(&mut rec, code, msg),
         };
         // Background checks that find nothing to do leave no audit trail.
-        if plan.actions.is_empty() && req.op == OP_POOL_HEAL {
+        if plan.actions.is_empty() && quiet {
             return Response::ok(
                 &serde_json::json!({"summary": plan.summary, "output": plan.detail}),
             );
@@ -403,6 +429,16 @@ impl Server {
                         }
                         Err(e) => Some(e.to_string()),
                     }
+                }
+                Action::TrySysfs { path, value } => {
+                    if let Err(e) = std::fs::write(path, value) {
+                        output.push_str(&format!(
+                            "[write {}: {e}; not supported, not retried]\n",
+                            path.display()
+                        ));
+                        self.tune_failed.lock().unwrap().insert(path.clone());
+                    }
+                    None
                 }
                 Action::RunBestEffort(c) => {
                     let args: Vec<&str> = c[1..].iter().map(String::as_str).collect();

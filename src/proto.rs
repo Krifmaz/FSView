@@ -28,6 +28,9 @@ pub const OP_PROTECT_MOUNTPOINTS: &str = "mountpoints.protect";
 pub const OP_POOL_HEAL: &str = "pool.heal";
 /// Per-branch health of every mounted mergerfs pool (read only).
 pub const OP_POOL_HEALTH: &str = "pool.health";
+/// Applies SMR protection: queue depth 1 and a long command timeout on the
+/// given disks, small writeback batches. Does nothing when already applied.
+pub const OP_DISK_TUNE: &str = "disk.tune";
 /// Which branch holds a file in a pool (read only).
 pub const OP_POOL_LOCATE: &str = "pool.locate";
 /// Guided repair of one pool branch: stop consumers, unmount, fsck,
@@ -330,6 +333,24 @@ pub struct PoolHealParams {
     /// Disks (e.g. "sdh") to leave alone, such as ones SMART calls failing.
     #[serde(default)]
     pub skip_disks: Vec<String>,
+    /// Also repair branches whose ext filesystem recorded errors: detach the
+    /// branch from the running pool, unmount it, `fsck.ext4 -f -y`, mount it
+    /// and attach it again. Skipped for disks with read errors or SMART
+    /// trouble, and at most a few times a day per filesystem.
+    #[serde(default)]
+    pub repair: bool,
+}
+
+/// Parameters of [`OP_DISK_TUNE`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiskTuneParams {
+    /// Disks to protect as SMR (e.g. "sdc").
+    #[serde(default)]
+    pub smr_disks: Vec<String>,
+    /// Cap the kernel's dirty page limits (small writeback batches).
+    #[serde(default)]
+    pub writeback: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

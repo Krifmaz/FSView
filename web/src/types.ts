@@ -107,6 +107,7 @@ export interface Disk {
   display_model: string;
   display_transport: string;
   health?: HealthView;
+  smr?: { known: boolean; overridden?: boolean; protected: boolean };
 }
 
 export interface HBA {
@@ -338,6 +339,8 @@ export interface Settings {
   skip_confirm?: boolean;
   auto_heal_pools?: boolean;
   pool_health_watch?: boolean;
+  smr_protection?: boolean;
+  auto_repair_branches?: boolean;
 }
 
 /** A kernel log line (journald entry). */

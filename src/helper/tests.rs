@@ -1068,3 +1068,194 @@ fn pool_repair_logs_trigger() {
     assert!(out.contains("timing out command"), "{out}");
     assert!(out.contains("No stop commands are configured"), "{out}");
 }
+
+#[test]
+fn disk_tune_applies_once() {
+    let t = server(true, vec![]);
+    let sys = t.srv.cfg.sys_root.clone();
+    let dev = sys.join("block/sdc/device");
+    std::fs::create_dir_all(&dev).unwrap();
+    std::fs::write(dev.join("queue_depth"), "254\n").unwrap();
+    std::fs::write(dev.join("timeout"), "30\n").unwrap();
+    // sdb's queue depth cannot be written (a directory stands in for a
+    // read-only attribute): recorded once, then skipped
+    let devb = sys.join("block/sdb/device");
+    std::fs::create_dir_all(devb.join("queue_depth")).unwrap();
+    std::fs::write(devb.join("timeout"), "600\n").unwrap();
+    let proc = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(proc.path().join("vm")).unwrap();
+    std::fs::write(proc.path().join("vm/dirty_bytes"), "0\n").unwrap();
+    std::fs::write(proc.path().join("vm/dirty_background_bytes"), "0\n").unwrap();
+    let mut cfg = t.srv.cfg.clone();
+    cfg.proc_sys = proc.path().into();
+    let ad = tempfile::tempdir().unwrap();
+    let srv = Server::new(
+        cfg,
+        t.fake.clone(),
+        Some(AuditLog::open(ad.path().join("a.log"), None).unwrap()),
+    );
+    let run = || {
+        let mut r = req(
+            OP_DISK_TUNE,
+            json!({"smr_disks": ["sdb", "sdc"], "writeback": true}),
+        );
+        r.confirmed = true;
+        srv.handle(&r, 1)
+    };
+    let r = run();
+    assert!(r.ok, "{r:?}");
+    assert_eq!(
+        std::fs::read_to_string(dev.join("queue_depth")).unwrap(),
+        "1"
+    );
+    assert_eq!(std::fs::read_to_string(dev.join("timeout")).unwrap(), "180");
+    // a longer timeout set by hand is kept
+    assert_eq!(
+        std::fs::read_to_string(devb.join("timeout")).unwrap(),
+        "600\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(proc.path().join("vm/dirty_bytes")).unwrap(),
+        (256u64 << 20).to_string()
+    );
+    assert!(r.result["output"].as_str().unwrap().contains("not retried"));
+    let audited = srv.audit.as_ref().unwrap().tail(10).unwrap().len();
+    // nothing left to do: no plan, no audit entry
+    let r = run();
+    assert!(r.ok && r.plan.is_empty(), "{r:?}");
+    assert_eq!(srv.audit.as_ref().unwrap().tail(10).unwrap().len(), audited);
+    // invalid names are refused
+    let mut bad_req = req(OP_DISK_TUNE, json!({"smr_disks": ["../../etc"]}));
+    bad_req.confirmed = true;
+    assert_eq!(srv.handle(&bad_req, 1).code, CODE_BAD_REQUEST);
+}
+
+/// A pool of media2 (sdb) and media1 (sdi); media2's ext4 recorded errors
+/// and mergerfs marked it RO.
+fn auto_repair_server(journal: &str) -> FsT {
+    let f = fstab_server(true);
+    std::fs::write(
+        &f.fstab,
+        "/mnt/media2:/mnt/media1 /mnt/pool fuse.mergerfs defaults,allow_other,nofail 0 0\n\
+         UUID=a /mnt/media2 ext4 defaults,nofail 0 2\n\
+         UUID=b /mnt/media1 ext4 defaults,nofail 0 2\n",
+    )
+    .unwrap();
+    let sys = f.t.srv.cfg.sys_root.clone();
+    for (k, n) in [("sdb", "18"), ("sdi", "0")] {
+        std::fs::create_dir_all(sys.join("fs/ext4").join(k)).unwrap();
+        std::fs::write(sys.join("fs/ext4").join(k).join("errors_count"), n).unwrap();
+    }
+    let findmnt = json!({"filesystems": [{"target": "/", "source": "/dev/nvme0n1p2", "fstype": "ext4", "options": "rw", "children": [
+        {"target": "/mnt/media2", "source": "/dev/sdb", "fstype": "ext4", "options": "rw,relatime"},
+        {"target": "/mnt/media1", "source": "/dev/sdi", "fstype": "ext4", "options": "rw,relatime"},
+        {"target": "/mnt/pool", "source": "mergerfs-pool", "fstype": "fuse.mergerfs", "options": "rw,allow_other"}
+    ]}]});
+    let mut r = f.t.fake.responses.lock().unwrap();
+    r.insert(
+        "findmnt -J -o TARGET,SOURCE,FSTYPE,OPTIONS".into(),
+        Fake::ok(findmnt.to_string().as_bytes()),
+    );
+    r.insert(
+        "getfattr --only-values -n user.mergerfs.branches /mnt/pool/.mergerfs".into(),
+        Fake::ok(b"/mnt/media2=RO:/mnt/media1=RW"),
+    );
+    r.insert(
+        "journalctl -k --since -6h -o json --no-pager".into(),
+        Fake::ok(journal.as_bytes()),
+    );
+    for wake in ["", " -n standby"] {
+        r.insert(
+            format!("smartctl -j -a{wake} /dev/sdb"),
+            Fake::ok(&td("smart_sdb_scsi.json")),
+        );
+        r.insert(
+            format!("smartctl -j -a{wake} -d sat /dev/sdb"),
+            Fake::ok(&td("smart_sdb_sat_synthetic.json")),
+        );
+    }
+    drop(r);
+    let dev = f.t.srv.cfg.scratch_dir.join("dev");
+    std::fs::create_dir_all(&dev).unwrap();
+    for n in ["sdb", "sdi"] {
+        std::fs::write(dev.join(n), b"").unwrap();
+    }
+    let mut cfg = f.t.srv.cfg.clone();
+    cfg.dev_dir = dev;
+    let srv = Server::new(cfg, f.t.fake.clone(), None);
+    FsT {
+        t: T {
+            srv,
+            fake: f.t.fake.clone(),
+            _dirs: f.t._dirs,
+        },
+        ..f
+    }
+}
+
+fn heal(f: &FsT, repair: bool) -> Response {
+    let mut r = req(OP_POOL_HEAL, json!({"repair": repair}));
+    r.dry_run = true;
+    f.t.srv.handle(&r, 1)
+}
+
+#[test]
+fn auto_repair_branch_with_errors() {
+    if !tool_exists_for_test("fsck.ext4") || !tool_exists_for_test("setfattr") {
+        return;
+    }
+    let f = auto_repair_server("");
+    let r = heal(&f, true);
+    assert!(r.ok, "{r:?}");
+    let p = &r.plan;
+    assert_eq!(p[0], "umount /mnt/media2", "{p:?} {}", r.result);
+    assert_eq!(
+        p[1],
+        "setfattr -n user.mergerfs.branches -v /mnt/media1=RW /mnt/pool/.mergerfs"
+    );
+    assert_eq!(p[2], "fsck.ext4 -f -y /dev/sdb");
+    assert!(p[3].ends_with("/mnt/media2"), "{}", p[3]);
+    assert_eq!(
+        p.last().unwrap(),
+        "setfattr -n user.mergerfs.branches -v /mnt/media2=RW:/mnt/media1=RW /mnt/pool/.mergerfs"
+    );
+    assert!(r.result["output"]
+        .as_str()
+        .unwrap()
+        .contains("recorded 18 error"));
+
+    // with repair off the broken branch only serves reads (already RO: no-op)
+    let r = heal(&f, false);
+    assert!(r.ok && r.plan.is_empty(), "{r:?}");
+}
+
+#[test]
+fn auto_repair_refuses_disk_with_read_errors() {
+    if !tool_exists_for_test("fsck.ext4") || !tool_exists_for_test("setfattr") {
+        return;
+    }
+    let line = json!({"__CURSOR": "c", "__REALTIME_TIMESTAMP": "1", "__MONOTONIC_TIMESTAMP": "1",
+        "_BOOT_ID": "b", "PRIORITY": "3",
+        "MESSAGE": "Buffer I/O error on dev sdb, logical block 1465130624, async page read"});
+    let f = auto_repair_server(&line.to_string());
+    let r = heal(&f, true);
+    assert!(r.ok && r.plan.is_empty(), "{r:?}");
+}
+
+#[test]
+fn auto_repair_rate_limited() {
+    if !tool_exists_for_test("fsck.ext4") || !tool_exists_for_test("setfattr") {
+        return;
+    }
+    let f = auto_repair_server("");
+    f.t.srv
+        .repairs
+        .lock()
+        .unwrap()
+        .insert("/mnt/media2".into(), vec![std::time::SystemTime::now(); 3]);
+    let r = heal(&f, true);
+    assert!(
+        r.ok && !r.plan.iter().any(|l| l.starts_with("fsck")),
+        "{r:?}"
+    );
+}

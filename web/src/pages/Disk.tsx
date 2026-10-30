@@ -124,6 +124,15 @@ export default function DiskPage({ name }: { name: string }) {
     }
   };
 
+  const setSmr = async (mode: "auto" | "on" | "off") => {
+    try {
+      await api.post(`/api/disks/${d.name}/smr`, { mode });
+      reload();
+    } catch (e: any) {
+      setMsg({ kind: "error", text: e.message });
+    }
+  };
+
   const startTest = (test: "short" | "long" | "abort") => st.start([d], test, test === "short" ? r?.short_test_minutes : test === "long" ? r?.long_test_minutes : undefined);
 
   const loadRaw = async () => {
@@ -176,6 +185,22 @@ export default function DiskPage({ name }: { name: string }) {
             <dd className="mono">{d.wwn || "–"}</dd>
             <dt>Partition table</dt>
             <dd>{d.pttype?.toUpperCase() || "none"}</dd>
+            {d.rotational && d.smr && (
+              <>
+                <dt title="Shingled drives stall under long write bursts; FSView gives them queue depth 1, a 180 s timeout and small writeback batches">SMR</dt>
+                <dd className="row" style={{ gap: 6 }}>
+                  <select
+                    value={d.smr.overridden === undefined ? "auto" : d.smr.overridden ? "on" : "off"}
+                    onChange={(e) => setSmr(e.target.value as "auto" | "on" | "off")}
+                  >
+                    <option value="auto">Auto ({d.smr.known ? "known SMR model" : "not a known SMR model"})</option>
+                    <option value="on">SMR: protect</option>
+                    <option value="off">Not SMR</option>
+                  </select>
+                  {d.smr.protected ? <span className="badge info">protected</span> : null}
+                </dd>
+              </>
+            )}
           </dl>
         </div>
         <div className="card">

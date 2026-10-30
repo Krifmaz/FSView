@@ -11,6 +11,7 @@ mod ops;
 mod poolhealth;
 mod smart;
 mod storage;
+mod tune;
 
 pub use audit::{AuditLog, AuditRecord};
 pub use hidden::plan_hidden_scan;
@@ -48,6 +49,8 @@ pub struct Config {
     pub version: String,
     /// Mount table read for pool health (default /proc/mounts).
     pub mounts_file: PathBuf,
+    /// `/proc/sys` (tests point it elsewhere).
+    pub proc_sys: PathBuf,
     /// Where device nodes are looked up when pool health checks that a
     /// branch's disk is still attached (default /dev; tests change it).
     pub dev_dir: PathBuf,
@@ -76,6 +79,7 @@ impl Default for Config {
             version: crate::VERSION.into(),
             mounts_file: "/proc/mounts".into(),
             dev_dir: "/dev".into(),
+            proc_sys: "/proc/sys".into(),
             repair_stop: vec![],
             repair_post: vec![],
         }
@@ -95,6 +99,13 @@ pub struct Server {
     runner: Arc<dyn Runner>,
     audit: Option<AuditLog>,
     smart_types: Mutex<HashMap<String, SmartChoice>>,
+    /// Tuning files whose write failed (not supported by the device); not
+    /// retried, so a failing write does not fill the audit log every minute.
+    tune_failed: Mutex<std::collections::HashSet<PathBuf>>,
+    /// When automatic branch repairs ran, per mountpoint (rate limit).
+    repairs: Mutex<HashMap<String, Vec<std::time::SystemTime>>>,
+    /// Held while a pool heal runs; a heal can include a long fsck.
+    heal_lock: Mutex<()>,
 }
 
 impl Server {
@@ -104,6 +115,9 @@ impl Server {
             runner,
             audit,
             smart_types: Mutex::new(HashMap::new()),
+            tune_failed: Mutex::new(Default::default()),
+            repairs: Mutex::new(HashMap::new()),
+            heal_lock: Mutex::new(()),
         })
     }
 

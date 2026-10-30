@@ -543,7 +543,7 @@ impl Server {
     }
 
     /// Processes using a mount, e.g. "plex (1234), smbd (99)".
-    fn mount_users(&self, t: &str) -> Option<String> {
+    pub(super) fn mount_users(&self, t: &str) -> Option<String> {
         if !tool_exists("fuser") {
             return None;
         }
@@ -1124,12 +1124,13 @@ fn heal_branches(
 
 /// A block filesystem whose disk dropped out while mounted: its device
 /// node is gone, or the name now belongs to a fresh attach of the disk.
-fn device_lost(m: &Mount) -> bool {
+/// `dev_dir` stands in for `/dev` (tests point it elsewhere).
+fn device_lost(m: &Mount, dev_dir: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
-    if !m.source.starts_with("/dev/") {
+    let Some(rest) = m.source.strip_prefix("/dev/") else {
         return false;
-    }
-    let Ok(dev) = std::fs::metadata(&m.source) else {
+    };
+    let Ok(dev) = std::fs::metadata(dev_dir.join(rest)) else {
         return true;
     };
     // Only filesystems whose st_dev is the block device itself.
@@ -1179,6 +1180,7 @@ impl Server {
         };
         let mut done = vec![];
         let mut notes = vec![];
+        let mut kernel_log: Option<Vec<crate::events::Entry>> = None;
         for pool in entries.iter().filter(|e| is_mergerfs(e)) {
             if pool.spec.contains('*') || !mounts.iter().any(|m| m.target == pool.file) {
                 continue;
@@ -1196,7 +1198,9 @@ impl Server {
                     let owner = match branch_owner(&path, pool, &entries) {
                         None => Owner::Root,
                         Some(o) => match mounts.iter().find(|m| m.target == o.file) {
-                            Some(m) if device_lost(m) => Owner::Stale(o.file.clone()),
+                            Some(m) if device_lost(m, &self.cfg.dev_dir) => {
+                                Owner::Stale(o.file.clone())
+                            }
                             Some(m) => Owner::Up {
                                 ro: m.options.split(',').any(|x| x == "ro"),
                             },
@@ -1261,8 +1265,102 @@ impl Server {
                 }
                 None
             };
-            let (desired, remount, n) = heal_branches(&bs, &mut blocker);
+            let (mut desired, remount, n) = heal_branches(&bs, &mut blocker);
             notes.extend(n);
+
+            // Filesystems under the branches that need fsck: recorded ext
+            // errors, or shut down / remounted read-only by the kernel.
+            let mut repairing: Vec<String> = vec![];
+            let mut broken: Vec<String> = vec![];
+            for b in &bs {
+                let Owner::Up { .. } = b.owner else { continue };
+                let Some(o) = branch_owner(&b.path, pool, &entries) else {
+                    continue;
+                };
+                let Some(m) = mounts.iter().rev().find(|m| m.target == o.file) else {
+                    continue;
+                };
+                let Some(why) = self.needs_fsck(m, o) else {
+                    continue;
+                };
+                broken.push(b.path.clone());
+                let dev = super::poolhealth::canonical(&m.source);
+                let verdict = if !p.repair {
+                    Err("automatic repair is off".to_string())
+                } else if done.contains(&o.file) {
+                    Err("already handled for another pool".to_string())
+                } else {
+                    self.auto_repair_check(
+                        &o.file,
+                        &dev,
+                        inv.as_ref(),
+                        &p.skip_disks,
+                        &mut kernel_log,
+                    )
+                };
+                match verdict {
+                    Err(e) => notes.push(format!(
+                        "{}: {why}; not repaired automatically: {e}",
+                        o.file
+                    )),
+                    Ok(()) => {
+                        let keep: Vec<String> = live
+                            .iter()
+                            .filter(|l| branch_path(l) != b.path)
+                            .cloned()
+                            .collect();
+                        if keep.is_empty() {
+                            notes.push(format!(
+                                "{}: {why}; not repaired automatically: it is the only disk in {}",
+                                o.file, pool.file
+                            ));
+                            continue;
+                        }
+                        // Unmount first: if something still uses the disk
+                        // this fails before anything changed. Then detach
+                        // it from the pool, check it, mount it again.
+                        plan.actions
+                            .push(Action::Run(vec!["umount".into(), o.file.clone()]));
+                        plan.actions.push(set_branches(&pool.file, &keep));
+                        plan.actions.push(Action::Run(vec![
+                            "fsck.ext4".into(),
+                            "-f".into(),
+                            "-y".into(),
+                            dev.clone(),
+                        ]));
+                        plan.actions
+                            .push(Action::Run(own_scope(self.mount_command(o))));
+                        plan.targets.push(o.file.clone());
+                        notes.push(format!("{}: {why}; repairing it (fsck {dev})", o.file));
+                        if !req.dry_run {
+                            self.repairs
+                                .lock()
+                                .unwrap()
+                                .entry(o.file.clone())
+                                .or_default()
+                                .push(std::time::SystemTime::now());
+                        }
+                        repairing.push(b.path.clone());
+                        done.push(o.file.clone());
+                    }
+                }
+            }
+            // A broken filesystem that is not being repaired only serves
+            // reads; one being repaired goes back with its fstab mode.
+            for d in desired.iter_mut() {
+                let path = branch_path(d).to_string();
+                if repairing.contains(&path) {
+                    if let Some(b) = bs.iter().find(|b| b.path == path) {
+                        *d = if b.mode.is_empty() {
+                            format!("{path}=RW")
+                        } else {
+                            format!("{path}={}", b.mode)
+                        };
+                    }
+                } else if broken.contains(&path) {
+                    *d = format!("{path}=RO");
+                }
+            }
             for t in remount {
                 if done.contains(&t) {
                     continue;
@@ -1290,7 +1388,7 @@ impl Server {
                     })
                     .collect()
             };
-            if !desired.is_empty() && norm(&desired) != norm(&live) {
+            if !desired.is_empty() && (!repairing.is_empty() || norm(&desired) != norm(&live)) {
                 plan.actions.push(set_branches(&pool.file, &desired));
                 plan.targets.push(pool.file.clone());
             }
@@ -1305,6 +1403,116 @@ impl Server {
             plan.detail.push('\n');
         }
         Ok(plan)
+    }
+}
+
+/// Most automatic repairs of one filesystem per day; after that it waits
+/// for a person.
+const MAX_AUTO_REPAIRS_PER_DAY: usize = 3;
+
+impl Server {
+    /// Why an ext filesystem under a branch needs fsck, or None: the kernel
+    /// shut it down (`emergency_ro`), remounted it read-only although fstab
+    /// mounts it read-write, or it has recorded errors
+    /// (`/sys/fs/ext4/<dev>/errors_count`, read without touching the disk).
+    fn needs_fsck(&self, m: &Mount, e: &FsEntry) -> Option<String> {
+        if !m.fstype.starts_with("ext") {
+            return None;
+        }
+        let opts: Vec<&str> = m.options.split(',').collect();
+        if opts.contains(&"emergency_ro") {
+            return Some("the kernel shut the filesystem down (emergency_ro)".into());
+        }
+        if opts.contains(&"ro") && !e.options.split(',').any(|o| o == "ro") {
+            return Some("the kernel remounted it read-only after an error".into());
+        }
+        let dev = super::poolhealth::canonical(&m.source);
+        let kname = crate::poolhealth::kernel_name(&dev);
+        let n: u64 = std::fs::read_to_string(
+            self.cfg
+                .sys_root
+                .join("fs/ext4")
+                .join(kname)
+                .join("errors_count"),
+        )
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+        (n > 0).then(|| format!("its filesystem recorded {n} error(s)"))
+    }
+
+    /// Whether the filesystem mounted at `target` (device `dev`) may be
+    /// repaired automatically. Refused when fsck.ext4 is missing, after
+    /// [`MAX_AUTO_REPAIRS_PER_DAY`] repairs in 24 hours, while something
+    /// uses the filesystem (it is retried on the next check), when SMART
+    /// rates the disk failing, cannot be read or shows uncorrected errors,
+    /// or when the disk had read errors in the last 6 hours: a disk that
+    /// cannot return its data needs copying off, not fsck.
+    fn auto_repair_check(
+        &self,
+        target: &str,
+        dev: &str,
+        inv: Option<&crate::inventory::Inventory>,
+        skip_disks: &[String],
+        kernel_log: &mut Option<Vec<crate::events::Entry>>,
+    ) -> Result<(), String> {
+        if !tool_exists("fsck.ext4") {
+            return Err("fsck.ext4 is not installed".into());
+        }
+        let day = std::time::Duration::from_secs(86_400);
+        let recent = self
+            .repairs
+            .lock()
+            .unwrap()
+            .get(target)
+            .map(|v| {
+                v.iter()
+                    .filter(|t| t.elapsed().is_ok_and(|e| e < day))
+                    .count()
+            })
+            .unwrap_or(0);
+        if recent >= MAX_AUTO_REPAIRS_PER_DAY {
+            return Err(format!(
+                "repaired {recent} times in the last 24 hours; it keeps failing, so it needs a look"
+            ));
+        }
+        let disk = inv
+            .and_then(|i| super::poolhealth::disk_of(i, dev))
+            .ok_or_else(|| format!("cannot find the disk holding {dev}"))?;
+        if skip_disks.contains(&disk) {
+            return Err(format!("SMART rates {disk} as failing"));
+        }
+        if let Some(users) = self.mount_users(target) {
+            return Err(format!("in use by {users}; will retry"));
+        }
+        let log = kernel_log.get_or_insert_with(|| {
+            self.runner
+                .run(
+                    "journalctl",
+                    &["-k", "--since", "-6h", "-o", "json", "--no-pager"],
+                )
+                .map(|r| crate::events::parse_json_lines(&r.stdout))
+                .unwrap_or_default()
+        });
+        let kname = crate::poolhealth::kernel_name(dev);
+        let reads = log
+            .iter()
+            .filter(|e| crate::poolhealth::is_read_error(&e.message, &[kname, &disk]))
+            .count();
+        if reads > 0 {
+            return Err(format!(
+                "{disk} had {reads} read error(s) in the last 6 hours; copy its data off instead"
+            ));
+        }
+        let st = self.smart_state(&disk, true);
+        let Some(c) = st.counts.filter(|c| !c.is_empty()) else {
+            return Err(format!("SMART of {disk} could not be read"));
+        };
+        if c.uncorrected() > 0 {
+            return Err(format!("{disk} has uncorrected errors ({})", c.describe()));
+        }
+        Ok(())
     }
 }
 

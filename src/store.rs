@@ -45,6 +45,15 @@ pub struct Settings {
     /// Every 5 minutes, check pool branches and record an event when one
     /// goes read-only (and when it recovers).
     pub pool_health_watch: bool,
+    /// Protect SMR disks (queue depth 1, long timeout, small writeback
+    /// batches), re-applied every minute so it survives disk re-attaches.
+    pub smr_protection: bool,
+    /// Per-disk SMR override by serial: true = treat as SMR, false = never.
+    /// Disks without an entry follow the known-model list.
+    pub smr_overrides: HashMap<String, bool>,
+    /// Let auto-heal fsck a pool branch whose filesystem recorded errors
+    /// (detached from the running pool meanwhile).
+    pub auto_repair_branches: bool,
 }
 
 impl Default for Settings {
@@ -58,6 +67,9 @@ impl Default for Settings {
             acknowledged: HashMap::new(),
             auto_heal_pools: true,
             pool_health_watch: false,
+            smr_protection: true,
+            smr_overrides: HashMap::new(),
+            auto_repair_branches: true,
         }
     }
 }

@@ -19,6 +19,7 @@ pub mod poolhealth;
 pub mod proto;
 pub mod runner;
 pub mod smart;
+pub mod smr;
 pub mod store;
 pub mod web;
 

@@ -27,9 +27,9 @@ const JOURNAL_LINES: &str = "200000";
 
 /// SMART of one disk as the health check sees it.
 #[derive(Clone, Default)]
-struct SmartState {
-    counts: Option<SmartCounts>,
-    standby: bool,
+pub(super) struct SmartState {
+    pub(super) counts: Option<SmartCounts>,
+    pub(super) standby: bool,
 }
 
 impl Server {
@@ -69,7 +69,7 @@ impl Server {
 
     /// Kernel messages of the current boot, oldest first. Empty when the
     /// journal cannot be read.
-    fn boot_kernel_log(&self) -> Vec<Entry> {
+    pub(super) fn boot_kernel_log(&self) -> Vec<Entry> {
         match self.runner.run(
             "journalctl",
             &["-k", "-b", "-o", "json", "--no-pager", "-n", JOURNAL_LINES],
@@ -81,7 +81,7 @@ impl Server {
 
     /// SMART counters of `disk`. With `wake` false a sleeping disk is left
     /// alone and reported as standby.
-    fn smart_state(&self, disk: &str, wake: bool) -> SmartState {
+    pub(super) fn smart_state(&self, disk: &str, wake: bool) -> SmartState {
         let Ok(res) = self.smart_get(disk, wake) else {
             return SmartState::default();
         };
@@ -388,7 +388,7 @@ impl Server {
 
 /// Resolves symlinks such as `/dev/disk/by-uuid/...`; returns the input
 /// when it cannot be resolved.
-fn canonical(p: &str) -> String {
+pub(super) fn canonical(p: &str) -> String {
     std::fs::canonicalize(p)
         .map(|c| c.display().to_string())
         .unwrap_or_else(|_| p.to_string())
@@ -396,7 +396,7 @@ fn canonical(p: &str) -> String {
 
 /// Name of the disk holding device path `dev` (the disk itself or one of
 /// its partitions or layers).
-fn disk_of(inv: &Inventory, dev: &str) -> Option<String> {
+pub(super) fn disk_of(inv: &Inventory, dev: &str) -> Option<String> {
     if dev.is_empty() {
         return None;
     }

@@ -72,6 +72,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/disks/{name}/locate", post(locate))
         .route("/api/disks/{name}/label", post(relabel))
         .route("/api/disks/{name}/acknowledge", post(acknowledge))
+        .route("/api/disks/{name}/smr", post(set_smr))
         .fallback(|| async { err(StatusCode::NOT_FOUND, "not_found", "no such endpoint") })
         .layer(middleware::from_fn(csrf));
     Router::new()
@@ -448,6 +449,19 @@ struct DiskView {
     display_transport: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     health: Option<HealthView>,
+    smr: SmrView,
+}
+
+/// SMR state of a disk as the UI shows it.
+#[derive(Serialize)]
+struct SmrView {
+    /// The model is on the known-SMR list.
+    known: bool,
+    /// The user's choice for this serial (None = follow the list).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    overridden: Option<bool>,
+    /// What FSView applies.
+    protected: bool,
 }
 
 fn disk_view(app: &App, d: &Disk) -> DiskView {
@@ -460,6 +474,29 @@ fn disk_view(app: &App, d: &Disk) -> DiskView {
             d.transport.to_uppercase()
         },
         health: None,
+        smr: {
+            let s = app.store.settings();
+            let protected = app.smr_disks(
+                &crate::inventory::Inventory {
+                    disks: vec![d.clone()],
+                    ..Default::default()
+                },
+                &s,
+            );
+            let smart_model = app
+                .smart_for(&d.name)
+                .and_then(|e| e.report)
+                .map(|r| r.model)
+                .unwrap_or_default();
+            SmrView {
+                known: crate::smr::effective(
+                    &[&smart_model, &format!("{}{}", d.vendor, d.model), &d.model],
+                    None,
+                ),
+                overridden: s.smr_overrides.get(&d.serial).copied(),
+                protected: s.smr_protection && !protected.is_empty(),
+            }
+        },
     };
     if let Some(e) = app.smart_for(&d.name) {
         let mut h = HealthView {
@@ -616,6 +653,56 @@ async fn enclosure_ignore(
         Ok(()) => ok(json!({"ignored_elements": s.ignored_elements})),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", e),
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SmrBody {
+    /// "auto" (follow the known-model list), "on" or "off".
+    mode: String,
+}
+
+/// `POST /api/disks/{name}/smr`: treat a disk as SMR or not, by serial.
+async fn set_smr(
+    State(app): AppState,
+    _u: User,
+    Path(name): Path<String>,
+    JsonBody(b): JsonBody<SmrBody>,
+) -> Response {
+    let d = match find_disk(&app, &name).await {
+        Ok(d) => d,
+        Err(r) => return *r,
+    };
+    if d.serial.is_empty() {
+        return err(
+            StatusCode::CONFLICT,
+            "no_serial",
+            "the disk reports no serial number",
+        );
+    }
+    let mut s = app.store.settings();
+    match b.mode.as_str() {
+        "auto" => {
+            s.smr_overrides.remove(&d.serial);
+        }
+        "on" | "off" => {
+            if s.smr_overrides.len() >= 500 && !s.smr_overrides.contains_key(&d.serial) {
+                return err(StatusCode::BAD_REQUEST, "bad_request", "too many overrides");
+            }
+            s.smr_overrides.insert(d.serial.clone(), b.mode == "on");
+        }
+        _ => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "mode must be auto, on or off",
+            )
+        }
+    }
+    if let Err(e) = app.store.set_settings(s) {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", e);
+    }
+    ok(json!({"ok": true}))
 }
 
 #[derive(Deserialize)]
@@ -1338,6 +1425,8 @@ async fn put_settings(
     v.ignored_elements = app.store.settings().ignored_elements;
     // Managed through /api/disks/{name}/acknowledge.
     v.acknowledged = app.store.settings().acknowledged;
+    // Managed through /api/disks/{name}/smr.
+    v.smr_overrides = app.store.settings().smr_overrides;
     let t = v.thresholds;
     let bad = |m: &str| err(StatusCode::BAD_REQUEST, "bad_request", m);
     if t.temp_warn_c < 20

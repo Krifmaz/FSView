@@ -231,6 +231,27 @@ pub fn is_io_error(msg: &str, names: &[&str]) -> bool {
     patterns().io.is_match(msg) && names.iter().any(|n| !n.is_empty() && mentions(msg, n))
 }
 
+/// True when a kernel message is a failed *read* on one of `names`: the
+/// disk could not return data (block-layer READ errors, `async page read`
+/// buffer errors, medium errors, unrecovered reads, internal target
+/// failures, a filesystem failing to read a block with EIO).
+///
+/// Dropped writes ("Commands cleared by device server", `(WRITE)` errors,
+/// lost async page writes) do not count: they come from a drive or link
+/// that stalled, which fsck can clean up after, while read failures mean
+/// the disk is losing data and should be copied off, not repaired in place.
+pub fn is_read_error(msg: &str, names: &[&str]) -> bool {
+    if !names.iter().any(|n| !n.is_empty() && mentions(msg, n)) {
+        return false;
+    }
+    (msg.contains("I/O error") && msg.contains("(READ)"))
+        || msg.contains("async page read")
+        || msg.contains("Unrecovered read error")
+        || msg.contains("Medium Error")
+        || msg.contains("Internal target failure")
+        || (msg.contains("error -5") && msg.contains("reading"))
+}
+
 /// The kernel messages that are ext4 journal trouble on `kname`, oldest
 /// first.
 pub fn ext4_errors<'a>(entries: &'a [Entry], kname: &str) -> Vec<&'a Entry> {
@@ -770,6 +791,28 @@ mergerfs-drivepool /mnt/drivepool fuse.mergerfs rw,nosuid,nodev,relatime,user_id
             "I/O error, dev sdc, sector 5",
             &["sdc1", "sdc"]
         ));
+    }
+
+    #[test]
+    fn read_vs_write_errors() {
+        let sdh = ["sdh", "sdh"];
+        for m in [
+            "I/O error, dev sdh, sector 9906979072 op 0x0:(READ) flags 0x803000",
+            "Buffer I/O error on dev sdh, logical block 1465130624, async page read",
+            "sd 2:0:18:0: [sdh] tag#1005 Add. Sense: Internal target failure",
+            "EXT4-fs warning (device sdh): dx_probe:791: inode #154796033: lblock 0: comm fuse.read: error -5 reading directory block",
+        ] {
+            assert!(is_read_error(m, &sdh), "{m}");
+        }
+        let sdc = ["sdc1", "sdc"];
+        for m in [
+            "I/O error, dev sdc, sector 2803156992 op 0x1:(WRITE) flags 0x4000",
+            "sd 2:0:13:0: [sdc] tag#927 Add. Sense: Commands cleared by device server",
+            "Buffer I/O error on dev sdc1, logical block 438304800, lost async page write",
+            "EXT4-fs warning (device sdc1): ext4_end_bio:369: I/O error 10 writing to inode 109577834",
+        ] {
+            assert!(!is_read_error(m, &sdc), "{m}");
+        }
     }
 
     #[test]

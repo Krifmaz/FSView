@@ -294,7 +294,7 @@ impl Server {
 /// caller).
 pub(super) fn apply_file_action(a: &Action) -> Result<(), String> {
     match a {
-        Action::Run(_) | Action::RunBestEffort(_) => {
+        Action::Run(_) | Action::RunBestEffort(_) | Action::TrySysfs { .. } => {
             Err("internal: Run is not a file action".into())
         }
         Action::Backup { src, dst } => backup(src, dst),

@@ -262,7 +262,11 @@ impl App {
         t.tick().await;
         loop {
             t.tick().await;
-            if !self.store.settings().auto_heal_pools {
+            let settings = self.store.settings();
+            if settings.smr_protection {
+                self.apply_smr_protection(&settings).await;
+            }
+            if !settings.auto_heal_pools {
                 continue;
             }
             let devs: Vec<String> = self.smart.lock().unwrap().keys().cloned().collect();
@@ -277,15 +281,31 @@ impl App {
                 op: OP_POOL_HEAL.into(),
                 actor: "fsview (auto-heal)".into(),
                 confirmed: true,
-                params: params(&PoolHealParams { skip_disks: skip }),
+                params: params(&PoolHealParams {
+                    skip_disks: skip,
+                    repair: settings.auto_repair_branches,
+                }),
                 ..Default::default()
             };
             match self.helper.call(req).await {
                 Ok(r) if r.ok && !r.plan.is_empty() => {
-                    eprintln!(
-                        "fsview: auto-heal: {}",
-                        r.result["summary"].as_str().unwrap_or("")
-                    );
+                    let summary = r.result["summary"].as_str().unwrap_or("").to_string();
+                    let notes = r.result["output"].as_str().unwrap_or("").trim().to_string();
+                    eprintln!("fsview: auto-heal: {summary}");
+                    // Make automatic fixes visible on the Events page.
+                    let now = Utc::now();
+                    self.events.add(vec![events::Event {
+                        cursor: format!("fsview-heal:{}", now.timestamp_micros()),
+                        time: now,
+                        category: events::CAT_POOL.into(),
+                        severity: "warn".into(),
+                        message: if notes.is_empty() {
+                            format!("Auto-heal: {summary}")
+                        } else {
+                            format!("Auto-heal: {summary}. {}", notes.replace('\n', " "))
+                        },
+                        ..Default::default()
+                    }]);
                     self.invalidate_caches().await;
                 }
                 Ok(r) if !r.ok && r.code != CODE_WRITES_OFF => {
@@ -294,6 +314,59 @@ impl App {
                 Err(e) => eprintln!("fsview: auto-heal: {e}"),
                 _ => {}
             }
+        }
+    }
+
+    /// Disks FSView treats as SMR: the per-serial override, else the
+    /// known-model list applied to the SMART model and to the inventory's
+    /// vendor+model (SATA disks behind SAS bridges split it in two).
+    pub fn smr_disks(&self, inv: &Inventory, s: &crate::store::Settings) -> Vec<String> {
+        inv.disks
+            .iter()
+            .filter(|d| {
+                let smart_model = self
+                    .smart_for(&d.name)
+                    .and_then(|e| e.report)
+                    .map(|r| r.model)
+                    .unwrap_or_default();
+                let joined = format!("{}{}", d.vendor, d.model);
+                crate::smr::effective(
+                    &[&smart_model, &joined, &d.model],
+                    s.smr_overrides.get(&d.serial).copied(),
+                )
+            })
+            .map(|d| d.name.clone())
+            .collect()
+    }
+
+    /// Applies SMR protection through the helper (no-op when in place).
+    async fn apply_smr_protection(&self, s: &crate::store::Settings) {
+        let Ok(inv) = self.inventory(false).await else {
+            return;
+        };
+        let disks = self.smr_disks(&inv, s);
+        let req = Request {
+            op: OP_DISK_TUNE.into(),
+            actor: "fsview (SMR protection)".into(),
+            confirmed: true,
+            params: params(&DiskTuneParams {
+                writeback: !disks.is_empty(),
+                smr_disks: disks,
+            }),
+            ..Default::default()
+        };
+        match self.helper.call(req).await {
+            Ok(r) if r.ok && !r.plan.is_empty() => eprintln!(
+                "fsview: {}",
+                r.result["summary"]
+                    .as_str()
+                    .unwrap_or("SMR protection applied")
+            ),
+            Ok(r) if !r.ok && r.code != CODE_WRITES_OFF => {
+                eprintln!("fsview: SMR protection: {}", r.error)
+            }
+            Err(e) => eprintln!("fsview: SMR protection: {e}"),
+            _ => {}
         }
     }
 
